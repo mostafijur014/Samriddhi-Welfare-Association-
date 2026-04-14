@@ -132,12 +132,33 @@ export const PublicView = () => {
   const column2Data = column1Data.filter(m => m.paidThisMonth >= m.monthlyContribution);
 
   // Column 3: Due person information (total dues across all months)
+  const currentDay = new Date().getDate();
   const column3Data = members.map(member => {
     const monthsSinceStart = allMonths.length;
     const expectedTotal = monthsSinceStart * member.monthlyContribution;
     const totalDue = Math.max(0, expectedTotal - member.totalDeposited);
-    return { ...member, totalDue };
-  }).filter(m => m.totalDue > 0);
+    
+    let dueColor = 'red'; 
+    let shouldShow = totalDue > 0;
+
+    // If they only owe for the current month (or less)
+    if (totalDue <= member.monthlyContribution) {
+      if (currentDay < (settings.dueStartDate || 15)) {
+        shouldShow = false; 
+      } else if (currentDay < 17) {
+        dueColor = 'yellow';
+      } else if (currentDay < (settings.dueEndDate || 20)) {
+        dueColor = 'blue';
+      } else {
+        dueColor = 'red';
+      }
+    } else {
+      // Owe for previous months
+      dueColor = 'red';
+    }
+
+    return { ...member, totalDue, dueColor, shouldShow };
+  }).filter(m => m.shouldShow);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -295,19 +316,50 @@ export const PublicView = () => {
           <div className="p-4 overflow-y-auto flex-grow space-y-3">
             {column3Data.length > 0 ? (
               column3Data.map(member => (
-                <div key={member.id} className="flex items-center justify-between p-2 rounded-xl bg-red-50 border border-red-100">
+                <div 
+                  key={member.id} 
+                  className={`flex items-center justify-between p-2 rounded-xl border ${
+                    member.dueColor === 'yellow' ? 'bg-yellow-50 border-yellow-100' : 
+                    member.dueColor === 'blue' ? 'bg-blue-50 border-blue-100' : 
+                    'bg-red-50 border-red-100'
+                  }`}
+                >
                   <div className="flex items-center gap-3">
-                    <div className="w-6 h-6 rounded-full bg-red-200 flex items-center justify-center">
-                      <AlertTriangle className="w-3.5 h-3.5 text-red-700" />
+                    <div className={`w-6 h-6 rounded-full flex items-center justify-center ${
+                      member.dueColor === 'yellow' ? 'bg-yellow-200' : 
+                      member.dueColor === 'blue' ? 'bg-blue-200' : 
+                      'bg-red-200'
+                    }`}>
+                      <AlertTriangle className={`w-3.5 h-3.5 ${
+                        member.dueColor === 'yellow' ? 'text-yellow-700' : 
+                        member.dueColor === 'blue' ? 'text-blue-700' : 
+                        'text-red-700'
+                      }`} />
                     </div>
                     <div>
-                      <p className="text-sm font-bold text-red-900 leading-none">{member.name}</p>
-                      <p className="text-[10px] text-red-600 font-mono mt-1">{member.memberId}</p>
+                      <p className={`text-sm font-bold leading-none ${
+                        member.dueColor === 'yellow' ? 'text-yellow-900' : 
+                        member.dueColor === 'blue' ? 'text-blue-900' : 
+                        'text-red-900'
+                      }`}>{member.name}</p>
+                      <p className={`text-[10px] font-mono mt-1 ${
+                        member.dueColor === 'yellow' ? 'text-yellow-600' : 
+                        member.dueColor === 'blue' ? 'text-blue-600' : 
+                        'text-red-600'
+                      }`}>{member.memberId}</p>
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-sm font-black text-red-700">{formatCurrency(member.totalDue)}</p>
-                    <p className="text-[9px] text-red-600 uppercase font-bold">Total Due</p>
+                    <p className={`text-sm font-black ${
+                      member.dueColor === 'yellow' ? 'text-yellow-700' : 
+                      member.dueColor === 'blue' ? 'text-blue-700' : 
+                      'text-red-700'
+                    }`}>{formatCurrency(member.totalDue)}</p>
+                    <p className={`text-[9px] uppercase font-bold ${
+                      member.dueColor === 'yellow' ? 'text-yellow-600' : 
+                      member.dueColor === 'blue' ? 'text-blue-600' : 
+                      'text-red-600'
+                    }`}>Total Due</p>
                   </div>
                 </div>
               ))

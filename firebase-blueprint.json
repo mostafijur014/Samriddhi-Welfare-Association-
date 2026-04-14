@@ -43,6 +43,8 @@
         "tagline2": { "type": "string", "description": "Secondary tagline text" },
         "heroTitle": { "type": "string", "description": "Main title on the public page" },
         "heroSubtitle": { "type": "string", "description": "Subtitle on the public page" },
+        "dueStartDate": { "type": "number", "description": "Day of the month when dues start appearing (e.g., 15)" },
+        "dueEndDate": { "type": "number", "description": "Day of the month when dues become critical (e.g., 20)" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["interestRate", "duration", "startDate"]

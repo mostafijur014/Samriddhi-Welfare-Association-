@@ -42,6 +42,8 @@ export interface Settings {
   tagline2?: string;
   heroTitle?: string;
   heroSubtitle?: string;
+  dueStartDate?: number;
+  dueEndDate?: number;
   showContactPersons?: boolean;
   contactPerson1?: ContactPerson;
   contactPerson2?: ContactPerson;
@@ -58,7 +60,9 @@ export const useData = () => {
     tagline1: 'Samriddhi Welfare Association',
     tagline2: 'Collective savings, strong future',
     heroTitle: 'Savings Group Overview',
-    heroSubtitle: 'Transparent tracking of our collective growth.'
+    heroSubtitle: 'Transparent tracking of our collective growth.',
+    dueStartDate: 15,
+    dueEndDate: 20
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

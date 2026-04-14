@@ -222,6 +222,8 @@ export const AdminDashboard = () => {
     tagline2: '',
     heroTitle: '',
     heroSubtitle: '',
+    dueStartDate: 15,
+    dueEndDate: 20,
     showContactPersons: true,
     contactPerson1: { name: '', role: '', phone: '', email: '', imageUrl: '' },
     contactPerson2: { name: '', role: '', phone: '', email: '', imageUrl: '' }
@@ -252,6 +254,8 @@ export const AdminDashboard = () => {
         tagline2: settings.tagline2 || '',
         heroTitle: settings.heroTitle || '',
         heroSubtitle: settings.heroSubtitle || '',
+        dueStartDate: settings.dueStartDate || 15,
+        dueEndDate: settings.dueEndDate || 20,
         showContactPersons: settings.showContactPersons !== undefined ? settings.showContactPersons : true,
         contactPerson1: settings.contactPerson1 || { name: '', role: '', phone: '', email: '', imageUrl: '' },
         contactPerson2: settings.contactPerson2 || { name: '', role: '', phone: '', email: '', imageUrl: '' }
@@ -295,11 +299,32 @@ export const AdminDashboard = () => {
   const column2Data = column1Data.filter(m => m.paidThisMonth >= m.monthlyContribution);
 
   // Column 3: Due person information (total dues across all months)
+  const currentDay = new Date().getDate();
   const column3Data = members.map(member => {
     const expectedTotal = expectedMonths * member.monthlyContribution;
     const totalDue = Math.max(0, expectedTotal - member.totalDeposited);
-    return { ...member, totalDue };
-  }).filter(m => m.totalDue > 0);
+    
+    let dueColor = 'red'; 
+    let shouldShow = totalDue > 0;
+
+    // If they only owe for the current month (or less)
+    if (totalDue <= member.monthlyContribution) {
+      if (currentDay < (settings.dueStartDate || 15)) {
+        shouldShow = false; 
+      } else if (currentDay < 17) {
+        dueColor = 'yellow';
+      } else if (currentDay < (settings.dueEndDate || 20)) {
+        dueColor = 'blue';
+      } else {
+        dueColor = 'red';
+      }
+    } else {
+      // Owe for previous months
+      dueColor = 'red';
+    }
+
+    return { ...member, totalDue, dueColor, shouldShow };
+  }).filter(m => m.shouldShow);
 
   // Auto-clear status message
   useEffect(() => {
@@ -488,6 +513,8 @@ export const AdminDashboard = () => {
         tagline2: settingsForm.tagline2,
         heroTitle: settingsForm.heroTitle,
         heroSubtitle: settingsForm.heroSubtitle,
+        dueStartDate: Number(settingsForm.dueStartDate),
+        dueEndDate: Number(settingsForm.dueEndDate),
         showContactPersons: settingsForm.showContactPersons,
         contactPerson1: settingsForm.contactPerson1,
         contactPerson2: settingsForm.contactPerson2,
@@ -642,7 +669,7 @@ export const AdminDashboard = () => {
               transition={{ duration: 0.3 }}
               className="px-6 pb-6"
             >
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 items-end">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
                 <div>
                   <label className="block text-xs font-medium text-gray-500 uppercase mb-1">Interest Rate (%)</label>
                   <input 
@@ -670,6 +697,30 @@ export const AdminDashboard = () => {
                     className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500"
                   />
                 </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 uppercase mb-1">Due Start Day</label>
+                  <input 
+                    type="number" 
+                    min="1"
+                    max="31"
+                    value={settingsForm.dueStartDate} 
+                    onChange={(e) => setSettingsForm({...settingsForm, dueStartDate: Number(e.target.value)})}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 uppercase mb-1">Due End Day</label>
+                  <input 
+                    type="number" 
+                    min="1"
+                    max="31"
+                    value={settingsForm.dueEndDate} 
+                    onChange={(e) => setSettingsForm({...settingsForm, dueEndDate: Number(e.target.value)})}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+              <div className="mt-4 flex justify-end">
                 <button 
                   onClick={handleUpdateSettings}
                   className="inline-flex items-center justify-center px-4 py-2 bg-indigo-50 text-indigo-600 font-semibold rounded-xl hover:bg-indigo-100 transition-all"
@@ -1138,19 +1189,50 @@ export const AdminDashboard = () => {
           <div className="p-4 overflow-y-auto flex-grow space-y-3">
             {column3Data.length > 0 ? (
               column3Data.map(member => (
-                <div key={member.id} className="flex items-center justify-between p-2 rounded-xl bg-red-50 border border-red-100">
+                <div 
+                  key={member.id} 
+                  className={`flex items-center justify-between p-2 rounded-xl border ${
+                    member.dueColor === 'yellow' ? 'bg-yellow-50 border-yellow-100' : 
+                    member.dueColor === 'blue' ? 'bg-blue-50 border-blue-100' : 
+                    'bg-red-50 border-red-100'
+                  }`}
+                >
                   <div className="flex items-center gap-3">
-                    <div className="w-6 h-6 rounded-full bg-red-200 flex items-center justify-center">
-                      <AlertTriangle className="w-3.5 h-3.5 text-red-700" />
+                    <div className={`w-6 h-6 rounded-full flex items-center justify-center ${
+                      member.dueColor === 'yellow' ? 'bg-yellow-200' : 
+                      member.dueColor === 'blue' ? 'bg-blue-200' : 
+                      'bg-red-200'
+                    }`}>
+                      <AlertTriangle className={`w-3.5 h-3.5 ${
+                        member.dueColor === 'yellow' ? 'text-yellow-700' : 
+                        member.dueColor === 'blue' ? 'text-blue-700' : 
+                        'text-red-700'
+                      }`} />
                     </div>
                     <div>
-                      <p className="text-sm font-bold text-red-900 leading-none">{member.name}</p>
-                      <p className="text-[10px] text-red-600 font-mono mt-1">{member.memberId}</p>
+                      <p className={`text-sm font-bold leading-none ${
+                        member.dueColor === 'yellow' ? 'text-yellow-900' : 
+                        member.dueColor === 'blue' ? 'text-blue-900' : 
+                        'text-red-900'
+                      }`}>{member.name}</p>
+                      <p className={`text-[10px] font-mono mt-1 ${
+                        member.dueColor === 'yellow' ? 'text-yellow-600' : 
+                        member.dueColor === 'blue' ? 'text-blue-600' : 
+                        'text-red-600'
+                      }`}>{member.memberId}</p>
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-sm font-black text-red-700">{formatCurrency(member.totalDue)}</p>
-                    <p className="text-[9px] text-red-600 uppercase font-bold">Total Due</p>
+                    <p className={`text-sm font-black ${
+                      member.dueColor === 'yellow' ? 'text-yellow-700' : 
+                      member.dueColor === 'blue' ? 'text-blue-700' : 
+                      'text-red-700'
+                    }`}>{formatCurrency(member.totalDue)}</p>
+                    <p className={`text-[9px] uppercase font-bold ${
+                      member.dueColor === 'yellow' ? 'text-yellow-600' : 
+                      member.dueColor === 'blue' ? 'text-blue-600' : 
+                      'text-red-600'
+                    }`}>Total Due</p>
                   </div>
                 </div>
               ))
