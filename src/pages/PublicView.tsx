@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { useData } from '../hooks/useData';
-import { calculateInterest, formatCurrency } from '../utils/calculations';
+import { useData, Member } from '../hooks/useData';
+import { calculateInterest, formatCurrency, getMonthsInRange } from '../utils/calculations';
 import { 
   getExpectedMonthlyAmount, 
   getTotalExpectedMonthly, 
@@ -18,6 +18,8 @@ export const PublicView = () => {
   const [selectedMemberForDetails, setSelectedMemberForDetails] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [viewMonth, setViewMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [historyMember, setHistoryMember] = useState<Member | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -156,8 +158,10 @@ export const PublicView = () => {
   // Column 1: All members and their deposit this month
   const column1Data = members.map(member => {
     const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === currentMonth);
-    const paidThisMonth = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
-    return { ...member, paidThisMonth };
+    const monthlyPaid = monthTransactions.filter(t => (t.type || 'monthly') === 'monthly').reduce((sum, t) => sum + t.amount, 0);
+    const yearlyPaid = monthTransactions.filter(t => t.type === 'yearly').reduce((sum, t) => sum + t.amount, 0);
+    const paidThisMonth = monthlyPaid + yearlyPaid;
+    return { ...member, paidThisMonth, monthlyPaid, yearlyPaid };
   });
 
   // Column 2: Who completed their deposit this month
@@ -272,10 +276,10 @@ export const PublicView = () => {
         <h3 className="text-lg font-semibold mb-6">Monthly Collection Growth</h3>
         <div className="h-56">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={chartData}>
+            <BarChart data={chartData} barGap={0} margin={{ top: 30, right: 10, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
               <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#9ca3af'}} />
-              <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#9ca3af'}} />
+              <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#9ca3af'}} domain={[0, (dataMax: number) => Math.ceil(dataMax * 1.15 / 100) * 100]} />
               <Tooltip 
                 cursor={{fill: '#f9fafb'}}
                 contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}}
@@ -313,8 +317,11 @@ export const PublicView = () => {
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="text-sm font-black text-gray-900">{formatCurrency(member.paidThisMonth)}</p>
-                  <p className="text-[9px] text-gray-400 uppercase font-bold">Target: {formatCurrency(getExpectedMonthlyAmount(member, currentMonth))}</p>
+                  <div className="flex flex-col items-end">
+                    <p className="text-sm font-black text-gray-900 leading-none">M: {formatCurrency(member.monthlyPaid)}</p>
+                    <p className="text-[10px] font-bold text-amber-600 mt-1">Y: {formatCurrency(member.yearlyPaid)}</p>
+                  </div>
+                  <p className="text-[9px] text-gray-400 uppercase font-bold mt-1">Target: {formatCurrency(getExpectedMonthlyAmount(member, currentMonth))}</p>
                 </div>
               </div>
             ))}
@@ -343,8 +350,11 @@ export const PublicView = () => {
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-sm font-black text-green-700">{formatCurrency(member.paidThisMonth)}</p>
-                    <p className="text-[9px] text-green-600 uppercase font-bold">Success</p>
+                    <div className="flex flex-col items-end">
+                      <p className="text-sm font-black text-green-700 leading-none">M: {formatCurrency(member.monthlyPaid)}</p>
+                      <p className="text-[10px] font-bold text-green-600 mt-1">Y: {formatCurrency(member.yearlyPaid)}</p>
+                    </div>
+                    <p className="text-[9px] text-green-600 uppercase font-bold mt-1">Success</p>
                   </div>
                 </div>
               ))
@@ -582,6 +592,7 @@ export const PublicView = () => {
                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Yearly Progress</th>
                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Total Paid</th>
                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Final Balance</th>
+                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Monthly Status</th>
                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
               </tr>
             </thead>
@@ -620,11 +631,16 @@ export const PublicView = () => {
                         <span className="text-[10px] text-gray-500">Yearly: {formatCurrency(member.yearlyFixedDeposit || 0)}</span>
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className={`text-sm font-bold ${isPaidInViewMonth ? 'text-green-600' : totalForViewMonth > 0 ? 'text-yellow-600' : 'text-red-600'}`}>
-                        {formatCurrency(totalForViewMonth)}
-                      </div>
-                    </td>
+      <td className="px-6 py-4 whitespace-nowrap">
+        <div className="flex flex-col">
+          <div className={`text-sm font-bold ${isPaidInViewMonth ? 'text-green-600' : totalForViewMonth > 0 ? 'text-yellow-600' : 'text-red-600'}`}>
+            M: {formatCurrency(monthTransactions.filter(t => (t.type || 'monthly') === 'monthly').reduce((sum, t) => sum + t.amount, 0))}
+          </div>
+          <div className="text-[10px] text-gray-500 font-medium">
+            Y: {formatCurrency(monthTransactions.filter(t => t.type === 'yearly').reduce((sum, t) => sum + t.amount, 0))}
+          </div>
+        </div>
+      </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                        <div className="flex flex-col">
                          <div className="w-24 h-1.5 bg-gray-100 rounded-full overflow-hidden">
@@ -647,6 +663,32 @@ export const PublicView = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-indigo-600 font-bold">
                       {formatCurrency(finalBalance)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex flex-col">
+                        <div className="flex items-center gap-1 mb-1">
+                          {getMonthsInRange(settings.startDate, currentMonth).slice(-3).map(m => {
+                            const mPaid = transactions.filter(t => t.memberId === member.id && t.month === m).reduce((sum, t) => sum + t.amount, 0);
+                            const mTarget = getExpectedMonthlyAmount(member, m);
+                            const isPaid = mPaid >= mTarget;
+                            return (
+                              <div key={m} className="flex flex-col items-center">
+                                <div className={`w-2.5 h-2.5 rounded-full ${isPaid ? 'bg-blue-600' : 'bg-red-500'}`} />
+                                <span className="text-[8px] text-gray-400 mt-0.5">{m.split('-')[1]}/{m.split('-')[0].slice(2)}</span>
+                              </div>
+                            );
+                          })}
+                          <button 
+                            onClick={() => {
+                              setHistoryMember(member);
+                              setIsHistoryModalOpen(true);
+                            }}
+                            className="ml-2 text-[10px] font-bold text-indigo-600 hover:text-indigo-800"
+                          >
+                            Details
+                          </button>
+                        </div>
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${
@@ -876,6 +918,83 @@ export const PublicView = () => {
           </div>
         </div>
       )}
+      {/* Payment History Modal */}
+      <AnimatePresence>
+        {isHistoryModalOpen && historyMember && (
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+            onClick={() => setIsHistoryModalOpen(false)}
+          >
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="px-6 py-6 bg-indigo-600 text-white flex justify-between items-center">
+                <div>
+                  <h3 className="text-xl font-bold">Payment History</h3>
+                  <p className="text-indigo-100 text-sm">{historyMember.name} ({historyMember.memberId})</p>
+                </div>
+                <button onClick={() => setIsHistoryModalOpen(false)} className="text-indigo-200 hover:text-white transition-colors">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              
+              <div className="p-6 max-h-[60vh] overflow-y-auto space-y-4">
+                {getMonthsInRange(settings.startDate, currentMonth).reverse().map(m => {
+                  const mTransactions = transactions.filter(t => t.memberId === historyMember.id && t.month === m);
+                  const monthlyPaid = mTransactions.filter(t => (t.type || 'monthly') === 'monthly').reduce((sum, t) => sum + t.amount, 0);
+                  const yearlyPaid = mTransactions.filter(t => t.type === 'yearly').reduce((sum, t) => sum + t.amount, 0);
+                  const target = getExpectedMonthlyAmount(historyMember, m);
+                  const isPaid = monthlyPaid >= target;
+                  
+                  return (
+                    <div key={m} className={`p-4 rounded-2xl border flex items-center justify-between ${
+                      isPaid ? 'bg-blue-50 border-blue-100' : 'bg-red-50 border-red-100'
+                    }`}>
+                      <div className="flex items-center gap-3">
+                        <div className={`w-3 h-3 rounded-full ${isPaid ? 'bg-blue-600' : 'bg-red-500'}`} />
+                        <div>
+                          <p className={`font-bold ${isPaid ? 'text-blue-900' : 'text-red-900'}`}>
+                            {new Date(m + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                          </p>
+                          <p className="text-[10px] text-gray-500 uppercase font-bold">Target: {formatCurrency(target)}</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="flex flex-col items-end">
+                          <p className={`text-sm font-bold ${isPaid ? 'text-blue-700' : 'text-red-700'}`}>
+                            M: {formatCurrency(monthlyPaid)}
+                          </p>
+                          <p className="text-[10px] font-medium text-gray-500">
+                            Y: {formatCurrency(yearlyPaid)}
+                          </p>
+                        </div>
+                        <p className={`text-[10px] font-bold uppercase mt-1 ${isPaid ? 'text-blue-600' : 'text-red-600'}`}>
+                          {isPaid ? 'Fully Paid' : 'Not Paid'}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              
+              <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex justify-center gap-6">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-blue-600" />
+                  <span className="text-xs font-bold text-gray-600 uppercase">Paid</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-red-500" />
+                  <span className="text-xs font-bold text-gray-600 uppercase">Due</span>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useData, Member, Transaction, Settings } from '../hooks/useData';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, addDoc, updateDoc, deleteDoc, doc, setDoc, serverTimestamp, getDocs, query, limit } from 'firebase/firestore';
-import { calculateInterest, formatCurrency } from '../utils/calculations';
+import { calculateInterest, formatCurrency, getMonthsInRange } from '../utils/calculations';
 import { 
   getExpectedMonthlyAmount, 
   getTotalExpectedMonthly, 
@@ -42,8 +42,9 @@ const SortableMemberRow: React.FC<{
   transactions: Transaction[], 
   settings: Settings,
   onEdit: (m: Member) => void,
-  onDelete: (id: string) => void
-}> = ({ member, transactions, settings, onEdit, onDelete }) => {
+  onDelete: (id: string) => void,
+  onViewHistory: (m: Member) => void
+}> = ({ member, transactions, settings, onEdit, onDelete, onViewHistory }) => {
   const {
     attributes,
     listeners,
@@ -74,6 +75,8 @@ const SortableMemberRow: React.FC<{
 
   const expectedMonthsTotal = getTotalExpectedMonthly(member, settings, currentMonth);
   const isBehind = member.totalDeposited < expectedMonthsTotal;
+
+  const months = getMonthsInRange(settings.startDate, currentMonth).slice(-3); // Show last 3 months dots
 
   return (
     <tr 
@@ -130,6 +133,29 @@ const SortableMemberRow: React.FC<{
         {formatCurrency(finalBalance)}
       </td>
       <td className="px-6 py-4 whitespace-nowrap">
+        <div className="flex flex-col">
+          <div className="flex items-center gap-1 mb-1">
+            {months.map(m => {
+              const mPaid = transactions.filter(t => t.memberId === member.id && t.month === m).reduce((sum, t) => sum + t.amount, 0);
+              const mTarget = getExpectedMonthlyAmount(member, m);
+              const isPaid = mPaid >= mTarget;
+              return (
+                <div key={m} className="flex flex-col items-center">
+                  <div className={`w-2.5 h-2.5 rounded-full ${isPaid ? 'bg-blue-600' : 'bg-red-500'}`} />
+                  <span className="text-[8px] text-gray-400 mt-0.5">{m.split('-')[1]}/{m.split('-')[0].slice(2)}</span>
+                </div>
+              );
+            })}
+            <button 
+              onClick={() => onViewHistory(member)}
+              className="ml-2 text-[10px] font-bold text-indigo-600 hover:text-indigo-800"
+            >
+              Details
+            </button>
+          </div>
+        </div>
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap">
         <span className={`px-2 py-1 rounded-full text-xs font-medium ${
           !isBehind ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'
         }`}>
@@ -163,6 +189,8 @@ export const AdminDashboard = () => {
   const [isDepositModalOpen, setIsDepositModalOpen] = useState(false);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
   const [memberToDelete, setMemberToDelete] = useState<string | null>(null);
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [historyMember, setHistoryMember] = useState<Member | null>(null);
   const [statusMessage, setStatusMessage] = useState<{type: 'success' | 'error', text: string} | null>(null);
   const [editingMember, setEditingMember] = useState<Member | null>(null);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
@@ -521,6 +549,18 @@ export const AdminDashboard = () => {
           const alreadyPaidMonthly = transactions.filter(t => t.memberId === memberId && t.month === month && (t.type || 'monthly') === 'monthly').reduce((sum, t) => sum + t.amount, 0);
           const alreadyPaidYearlyInCycle = getYearlyPaidInCycle(member, transactions, currentYearCycleStart);
 
+          // Rule: Monthly must be paid before yearly
+          if (alreadyPaidMonthly < monthlyTarget && mAmount === 0 && yAmount > 0) {
+            setStatusMessage({ type: 'error', text: `Monthly contribution for ${member.name} must be paid before yearly deposit.` });
+            return;
+          }
+
+          // Rule: Monthly must be full amount or zero
+          if (mAmount > 0 && (alreadyPaidMonthly + mAmount) < monthlyTarget) {
+            setStatusMessage({ type: 'error', text: `Monthly contribution for ${member.name} must be the full amount (${monthlyTarget - alreadyPaidMonthly} remaining). Partial payments are not allowed.` });
+            return;
+          }
+
           if (alreadyPaidMonthly + mAmount > monthlyTarget) {
             setStatusMessage({ type: 'error', text: `Total monthly deposit for ${member.name} cannot exceed ${monthlyTarget}. (Already paid: ${alreadyPaidMonthly})` });
             return;
@@ -579,6 +619,11 @@ export const AdminDashboard = () => {
 
           if (newMonthlyTotal > monthlyTarget) {
             setStatusMessage({ type: 'error', text: `Total monthly deposit for ${member.name} cannot exceed ${monthlyTarget}` });
+            return;
+          }
+
+          if (newMonthlyTotal > 0 && newMonthlyTotal < monthlyTarget) {
+            setStatusMessage({ type: 'error', text: `Monthly contribution for ${member.name} must be the full amount (${monthlyTarget}). Partial payments are not allowed.` });
             return;
           }
 
@@ -1549,6 +1594,7 @@ export const AdminDashboard = () => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Contribution</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total Paid</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Final Balance</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Monthly Status</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
                 </tr>
@@ -1580,6 +1626,10 @@ export const AdminDashboard = () => {
                         setMemberToDelete(id);
                         setIsConfirmDeleteOpen(true);
                       }}
+                      onViewHistory={(m) => {
+                        setHistoryMember(m);
+                        setIsHistoryModalOpen(true);
+                      }}
                     />
                   ))}
                 </SortableContext>
@@ -1592,12 +1642,16 @@ export const AdminDashboard = () => {
       {/* Member Modal */}
       <AnimatePresence>
         {isMemberModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+            onClick={() => setIsMemberModalOpen(false)}
+          >
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
               className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
             >
               <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
                 <h3 className="text-xl font-bold text-gray-900">{editingMember ? 'Edit Member' : 'Add New Member'}</h3>
@@ -1700,12 +1754,16 @@ export const AdminDashboard = () => {
       {/* Deposit Modal */}
       <AnimatePresence>
         {isDepositModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+            onClick={() => { setIsDepositModalOpen(false); setSelectedMemberIds([]); }}
+          >
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
               className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
             >
               <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
                 <h3 className="text-xl font-bold text-gray-900">
@@ -1766,10 +1824,13 @@ export const AdminDashboard = () => {
                       <div>
                         <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Monthly (৳)</label>
                         <input 
-                          required 
                           type="number" 
                           value={monthlyDepositAmount} 
-                          onChange={(e) => setMonthlyDepositAmount(e.target.value)}
+                          onChange={(e) => {
+                            setMonthlyDepositAmount(e.target.value);
+                            if (e.target.value) setStatusMessage(null);
+                          }}
+                          placeholder="0"
                           max={(() => {
                             if (selectedMemberIds.length === 1) {
                               const member = members.find(m => m.id === selectedMemberIds[0]);
@@ -1788,10 +1849,36 @@ export const AdminDashboard = () => {
                       <div>
                         <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Yearly (৳)</label>
                         <input 
-                          required 
                           type="number" 
                           value={yearlyDepositAmount} 
-                          onChange={(e) => setYearlyDepositAmount(e.target.value)}
+                          onChange={(e) => {
+                            const member = members.find(m => m.id === selectedMemberIds[0]);
+                            if (member) {
+                              const targetAmount = getExpectedMonthlyAmount(member, depositMonth);
+                              const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === depositMonth && (t.type || 'monthly') === 'monthly');
+                              const alreadyPaid = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
+                              
+                              if (alreadyPaid < targetAmount && !monthlyDepositAmount) {
+                                setStatusMessage({ type: 'error', text: 'Please fill Monthly Contribution first' });
+                                return;
+                              }
+                            }
+                            setYearlyDepositAmount(e.target.value);
+                            setStatusMessage(null);
+                          }}
+                          placeholder="0"
+                          disabled={(() => {
+                            if (selectedMemberIds.length === 1) {
+                              const member = members.find(m => m.id === selectedMemberIds[0]);
+                              if (member) {
+                                const targetAmount = getExpectedMonthlyAmount(member, depositMonth);
+                                const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === depositMonth && (t.type || 'monthly') === 'monthly');
+                                const alreadyPaid = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
+                                return alreadyPaid < targetAmount && !monthlyDepositAmount;
+                              }
+                            }
+                            return false;
+                          })()}
                           max={(() => {
                             if (selectedMemberIds.length === 1) {
                               const member = members.find(m => m.id === selectedMemberIds[0]);
@@ -1804,7 +1891,20 @@ export const AdminDashboard = () => {
                             }
                             return undefined;
                           })()}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500" 
+                          className={`w-full px-3 py-2 border rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500 ${
+                            (() => {
+                              if (selectedMemberIds.length === 1) {
+                                const member = members.find(m => m.id === selectedMemberIds[0]);
+                                if (member) {
+                                  const targetAmount = getExpectedMonthlyAmount(member, depositMonth);
+                                  const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === depositMonth && (t.type || 'monthly') === 'monthly');
+                                  const alreadyPaid = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
+                                  return alreadyPaid < targetAmount && !monthlyDepositAmount;
+                                }
+                              }
+                              return false;
+                            })() ? 'bg-gray-50 border-gray-200 cursor-not-allowed' : 'border-gray-300'
+                          }`}
                         />
                       </div>
                     </div>
@@ -1897,7 +1997,9 @@ export const AdminDashboard = () => {
                                       const mTransactions = transactions.filter(t => t.memberId === selectedMember.id && t.month === depositMonth);
                                       if (depositView === 'pending') {
                                         const alreadyPaid = mTransactions.reduce((sum, t) => sum + t.amount, 0);
-                                        setDepositAmount(String(getExpectedMonthlyAmount(selectedMember, depositMonth) - alreadyPaid));
+                                        const remaining = getExpectedMonthlyAmount(selectedMember, depositMonth) - alreadyPaid;
+                                        setDepositAmount(String(remaining));
+                                        setMonthlyDepositAmount(String(remaining > 0 ? remaining : 0));
                                       } else {
                                         const monthlyPaid = mTransactions.filter(t => (t.type || 'monthly') === 'monthly').reduce((sum, t) => sum + t.amount, 0);
                                         const yearlyPaid = mTransactions.filter(t => t.type === 'yearly').reduce((sum, t) => sum + t.amount, 0);
@@ -1949,15 +2051,98 @@ export const AdminDashboard = () => {
         )}
       </AnimatePresence>
 
+      {/* Payment History Modal */}
+      <AnimatePresence>
+        {isHistoryModalOpen && historyMember && (
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+            onClick={() => setIsHistoryModalOpen(false)}
+          >
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="px-6 py-6 bg-indigo-600 text-white flex justify-between items-center">
+                <div>
+                  <h3 className="text-xl font-bold">Payment History</h3>
+                  <p className="text-indigo-100 text-sm">{historyMember.name} ({historyMember.memberId})</p>
+                </div>
+                <button onClick={() => setIsHistoryModalOpen(false)} className="text-indigo-200 hover:text-white transition-colors">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              
+              <div className="p-6 max-h-[60vh] overflow-y-auto space-y-4">
+                {getMonthsInRange(settings.startDate, new Date().toISOString().slice(0, 7)).reverse().map(m => {
+                  const mTransactions = transactions.filter(t => t.memberId === historyMember.id && t.month === m);
+                  const monthlyPaid = mTransactions.filter(t => (t.type || 'monthly') === 'monthly').reduce((sum, t) => sum + t.amount, 0);
+                  const yearlyPaid = mTransactions.filter(t => t.type === 'yearly').reduce((sum, t) => sum + t.amount, 0);
+                  const totalPaid = monthlyPaid + yearlyPaid;
+                  const target = getExpectedMonthlyAmount(historyMember, m);
+                  const isPaid = monthlyPaid >= target;
+                  
+                  return (
+                    <div key={m} className={`p-4 rounded-2xl border flex items-center justify-between ${
+                      isPaid ? 'bg-blue-50 border-blue-100' : 'bg-red-50 border-red-100'
+                    }`}>
+                      <div className="flex items-center gap-3">
+                        <div className={`w-3 h-3 rounded-full ${isPaid ? 'bg-blue-600' : 'bg-red-500'}`} />
+                        <div>
+                          <p className={`font-bold ${isPaid ? 'text-blue-900' : 'text-red-900'}`}>
+                            {new Date(m + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                          </p>
+                          <p className="text-[10px] text-gray-500 uppercase font-bold">Target: {formatCurrency(target)}</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="flex flex-col items-end">
+                          <p className={`text-sm font-bold ${isPaid ? 'text-blue-700' : 'text-red-700'}`}>
+                            M: {formatCurrency(monthlyPaid)}
+                          </p>
+                          <p className="text-[10px] font-medium text-gray-500">
+                            Y: {formatCurrency(yearlyPaid)}
+                          </p>
+                        </div>
+                        <p className={`text-[10px] font-bold uppercase mt-1 ${isPaid ? 'text-blue-600' : 'text-red-600'}`}>
+                          {isPaid ? 'Fully Paid' : 'Not Paid'}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              
+              <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex justify-center gap-6">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-blue-600" />
+                  <span className="text-xs font-bold text-gray-600 uppercase">Paid</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-red-500" />
+                  <span className="text-xs font-bold text-gray-600 uppercase">Due</span>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Confirmation Modal */}
       <AnimatePresence>
         {isConfirmDeleteOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+            onClick={() => setIsConfirmDeleteOpen(false)}
+          >
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
               className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden p-6"
+              onClick={(e) => e.stopPropagation()}
             >
               <div className="text-center">
                 <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
