@@ -70,12 +70,18 @@ export const PublicView = () => {
 
   const chartMonths = getChartMonths();
 
-  const chartData = chartMonths.map(month => ({
-    month: new Date(month + '-01').toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
-    amount: transactions
-      .filter(t => t.month === month && members.some(m => m.id === t.memberId))
-      .reduce((sum, t) => sum + t.amount, 0)
-  }));
+  const chartData = chartMonths.map(month => {
+    const monthTransactions = transactions.filter(t => t.month === month && members.some(m => m.id === t.memberId));
+    const monthly = monthTransactions.filter(t => (t.type || 'monthly') === 'monthly').reduce((sum, t) => sum + t.amount, 0);
+    const yearly = monthTransactions.filter(t => t.type === 'yearly').reduce((sum, t) => sum + t.amount, 0);
+    
+    return {
+      month: new Date(month + '-01').toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+      monthly,
+      yearly,
+      total: monthly + yearly
+    };
+  });
 
   if (loading) {
     return (
@@ -113,7 +119,7 @@ export const PublicView = () => {
   ));
   
   const totalInterest = memberCalculations.reduce((sum, c) => sum + c.interestEarned, 0);
-  const totalFinal = totalDeposited + totalInterest;
+  const totalFinal = totalDeposited + totalYearlyPaid + totalInterest;
 
   const filteredMembers = members.filter(m => 
     m.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -256,12 +262,10 @@ export const PublicView = () => {
               <Tooltip 
                 cursor={{fill: '#f9fafb'}}
                 contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}}
+                formatter={(value: number) => [formatCurrency(value), '']}
               />
-              <Bar dataKey="amount" radius={[4, 4, 0, 0]} maxBarSize={32}>
-                {chartData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={index === chartData.length - 1 ? '#4f46e5' : '#c7d2fe'} />
-                ))}
-              </Bar>
+              <Bar dataKey="monthly" stackId="a" fill="#10b981" radius={[0, 0, 0, 0]} maxBarSize={32} />
+              <Bar dataKey="yearly" stackId="a" fill="#f59e0b" radius={[4, 4, 0, 0]} maxBarSize={32} />
             </BarChart>
           </ResponsiveContainer>
         </div>
