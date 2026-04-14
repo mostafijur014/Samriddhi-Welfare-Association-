@@ -168,6 +168,8 @@ export const AdminDashboard = () => {
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [depositView, setDepositView] = useState<'pending' | 'completed'>('pending');
   const [depositAmount, setDepositAmount] = useState('');
+  const [monthlyDepositAmount, setMonthlyDepositAmount] = useState('');
+  const [yearlyDepositAmount, setYearlyDepositAmount] = useState('');
   const [depositMonth, setDepositMonth] = useState(new Date().toISOString().slice(0, 7));
   const [depositType, setDepositType] = useState<'monthly' | 'yearly'>('monthly');
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -474,6 +476,11 @@ export const AdminDashboard = () => {
     const now = new Date();
     const month = depositMonth;
 
+    if (settings.startDate && month < settings.startDate) {
+      setStatusMessage({ type: 'error', text: `Cannot log deposits before the group start date (${settings.startDate})` });
+      return;
+    }
+
     try {
       for (const memberId of targetIds) {
         const member = members.find(m => m.id === memberId);
@@ -494,96 +501,141 @@ export const AdminDashboard = () => {
         const alreadyPaidThisMonth = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
 
         if (depositView === 'pending') {
-          let amountToDeposit: number;
-          if (targetIds.length > 1) {
-            amountToDeposit = Number(targetAmount) - alreadyPaidThisMonth;
-          } else {
-            amountToDeposit = Number(depositAmount);
-            if (isNaN(amountToDeposit) || amountToDeposit <= 0) {
-              setStatusMessage({ type: 'error', text: 'Please enter a valid amount' });
-              return;
-            }
-            
-            if (!isYearly && alreadyPaidThisMonth + amountToDeposit > targetAmount) {
-              setStatusMessage({ type: 'error', text: `Total monthly deposit for ${member.name} cannot exceed ${targetAmount}` });
-              return;
-            }
-            
-            if (isYearly && currentTotal + amountToDeposit > targetAmount) {
-              setStatusMessage({ type: 'error', text: `Total yearly deposit for ${member.name} cannot exceed ${targetAmount}` });
-              return;
-            }
+          const mAmount = Number(monthlyDepositAmount) || 0;
+          const yAmount = Number(yearlyDepositAmount) || 0;
+
+          if (mAmount < 0 || yAmount < 0) {
+            setStatusMessage({ type: 'error', text: 'Please enter valid amounts' });
+            return;
           }
 
-          if (amountToDeposit > 0) {
-            // 1. Add Transaction
+          if (mAmount === 0 && yAmount === 0) {
+            setStatusMessage({ type: 'error', text: 'Please enter at least one deposit amount' });
+            return;
+          }
+
+          const currentYearCycleStart = getYearlyCycleStart(month, settings.startDate);
+          const monthlyTarget = getExpectedMonthlyAmount(member, month);
+          const yearlyTarget = getYearlyTargetWithCarryover(member, transactions, settings, currentYearCycleStart);
+
+          const alreadyPaidMonthly = transactions.filter(t => t.memberId === memberId && t.month === month && (t.type || 'monthly') === 'monthly').reduce((sum, t) => sum + t.amount, 0);
+          const alreadyPaidYearlyInCycle = getYearlyPaidInCycle(member, transactions, currentYearCycleStart);
+
+          if (alreadyPaidMonthly + mAmount > monthlyTarget) {
+            setStatusMessage({ type: 'error', text: `Total monthly deposit for ${member.name} cannot exceed ${monthlyTarget}. (Already paid: ${alreadyPaidMonthly})` });
+            return;
+          }
+
+          if (alreadyPaidYearlyInCycle + yAmount > yearlyTarget) {
+            setStatusMessage({ type: 'error', text: `Total yearly deposit for ${member.name} cannot exceed ${yearlyTarget}. (Already paid in cycle: ${alreadyPaidYearlyInCycle})` });
+            return;
+          }
+
+          // 1. Add Monthly Transaction if any
+          if (mAmount > 0) {
             await addDoc(collection(db, 'transactions'), {
               memberId: memberId,
-              amount: amountToDeposit,
+              amount: mAmount,
               date: now.toISOString(),
               month,
-              type: depositType,
+              type: 'monthly',
               createdAt: serverTimestamp()
             }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'transactions'));
 
-            // 2. Update Member
-            const updateData: any = {
+            await updateDoc(doc(db, 'members', memberId), {
+              totalDeposited: (Number(member.totalDeposited) || 0) + mAmount,
               lastPaymentDate: now.toISOString()
-            };
-            if (isYearly) {
-              updateData.totalYearlyPaid = currentTotal + amountToDeposit;
-            } else {
-              updateData.totalDeposited = (Number(member.totalDeposited) || 0) + amountToDeposit;
-            }
-            await updateDoc(doc(db, 'members', memberId), updateData).catch(err => handleFirestoreError(err, OperationType.UPDATE, `members/${memberId}`));
+            }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `members/${memberId}`));
+          }
+
+          // 2. Add Yearly Transaction if any
+          if (yAmount > 0) {
+            await addDoc(collection(db, 'transactions'), {
+              memberId: memberId,
+              amount: yAmount,
+              date: now.toISOString(),
+              month,
+              type: 'yearly',
+              createdAt: serverTimestamp()
+            }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'transactions'));
+
+            await updateDoc(doc(db, 'members', memberId), {
+              totalYearlyPaid: (Number(member.totalYearlyPaid) || 0) + yAmount,
+              lastPaymentDate: now.toISOString()
+            }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `members/${memberId}`));
           }
         } else {
           // Completed View (Update case)
-          const newTotal = Number(depositAmount);
-          if (isNaN(newTotal) || newTotal < 0) {
-            setStatusMessage({ type: 'error', text: 'Please enter a valid amount' });
-            return;
-          }
+          const newMonthlyTotal = Number(monthlyDepositAmount);
+          const newYearlyTotal = Number(yearlyDepositAmount);
           
-          if (!isYearly && newTotal > targetAmount) {
-            setStatusMessage({ type: 'error', text: `Total monthly deposit for ${member.name} cannot exceed ${targetAmount}` });
+          if (isNaN(newMonthlyTotal) || newMonthlyTotal < 0 || isNaN(newYearlyTotal) || newYearlyTotal < 0) {
+            setStatusMessage({ type: 'error', text: 'Please enter valid amounts' });
             return;
           }
 
-          if (isYearly && newTotal > targetAmount) {
-            setStatusMessage({ type: 'error', text: `Total yearly deposit for ${member.name} cannot exceed ${targetAmount}` });
+          const monthlyTarget = getExpectedMonthlyAmount(member, month);
+          const yearlyTarget = getYearlyTargetWithCarryover(member, transactions, settings, currentYearCycleStart);
+
+          if (newMonthlyTotal > monthlyTarget) {
+            setStatusMessage({ type: 'error', text: `Total monthly deposit for ${member.name} cannot exceed ${monthlyTarget}` });
             return;
           }
 
-          const diff = newTotal - alreadyPaidThisMonth;
-          if (diff === 0) continue;
-
-          // Consolidate transactions for this month/type into one
-          for (const t of monthTransactions) {
-            await deleteDoc(doc(db, 'transactions', t.id)).catch(err => handleFirestoreError(err, OperationType.DELETE, `transactions/${t.id}`));
+          if (newYearlyTotal > yearlyTarget) {
+            setStatusMessage({ type: 'error', text: `Total yearly deposit for ${member.name} cannot exceed ${yearlyTarget}` });
+            return;
           }
 
-          if (newTotal > 0) {
-            await addDoc(collection(db, 'transactions'), {
-              memberId: memberId,
-              amount: newTotal,
-              date: now.toISOString(),
-              month,
-              type: depositType,
-              createdAt: serverTimestamp()
-            }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'transactions'));
+          // Handle Monthly Update
+          const monthlyTransactions = transactions.filter(t => t.memberId === memberId && t.month === month && (t.type || 'monthly') === 'monthly');
+          const currentMonthlyPaid = monthlyTransactions.reduce((sum, t) => sum + t.amount, 0);
+          const monthlyDiff = newMonthlyTotal - currentMonthlyPaid;
+
+          if (monthlyDiff !== 0) {
+            for (const t of monthlyTransactions) {
+              await deleteDoc(doc(db, 'transactions', t.id)).catch(err => handleFirestoreError(err, OperationType.DELETE, `transactions/${t.id}`));
+            }
+            if (newMonthlyTotal > 0) {
+              await addDoc(collection(db, 'transactions'), {
+                memberId: memberId,
+                amount: newMonthlyTotal,
+                date: now.toISOString(),
+                month,
+                type: 'monthly',
+                createdAt: serverTimestamp()
+              }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'transactions'));
+            }
+            await updateDoc(doc(db, 'members', memberId), {
+              totalDeposited: (Number(member.totalDeposited) || 0) + monthlyDiff,
+              lastPaymentDate: now.toISOString()
+            }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `members/${memberId}`));
           }
 
-          // Update Member
-          const updateData: any = {
-            lastPaymentDate: now.toISOString()
-          };
-          if (isYearly) {
-            updateData.totalYearlyPaid = (Number(member.totalYearlyPaid) || 0) + diff;
-          } else {
-            updateData.totalDeposited = (Number(member.totalDeposited) || 0) + diff;
+          // Handle Yearly Update
+          const yearlyTransactions = transactions.filter(t => t.memberId === memberId && t.month === month && t.type === 'yearly');
+          const currentYearlyPaidInMonth = yearlyTransactions.reduce((sum, t) => sum + t.amount, 0);
+          const yearlyDiff = newYearlyTotal - currentYearlyPaidInMonth;
+
+          if (yearlyDiff !== 0) {
+            for (const t of yearlyTransactions) {
+              await deleteDoc(doc(db, 'transactions', t.id)).catch(err => handleFirestoreError(err, OperationType.DELETE, `transactions/${t.id}`));
+            }
+            if (newYearlyTotal > 0) {
+              await addDoc(collection(db, 'transactions'), {
+                memberId: memberId,
+                amount: newYearlyTotal,
+                date: now.toISOString(),
+                month,
+                type: 'yearly',
+                createdAt: serverTimestamp()
+              }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'transactions'));
+            }
+            await updateDoc(doc(db, 'members', memberId), {
+              totalYearlyPaid: (Number(member.totalYearlyPaid) || 0) + yearlyDiff,
+              lastPaymentDate: now.toISOString()
+            }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `members/${memberId}`));
           }
-          await updateDoc(doc(db, 'members', memberId), updateData).catch(err => handleFirestoreError(err, OperationType.UPDATE, `members/${memberId}`));
         }
       }
 
@@ -736,6 +788,8 @@ export const AdminDashboard = () => {
                   setDepositView('pending'); 
                   setSelectedMemberIds([]);
                   setDepositAmount('');
+                  setMonthlyDepositAmount('');
+                  setYearlyDepositAmount('');
                   setIsDepositModalOpen(true); 
                 }}
                 className="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 transition-all shadow-sm"
@@ -747,6 +801,8 @@ export const AdminDashboard = () => {
                   setDepositView('completed'); 
                   setSelectedMemberIds([]);
                   setDepositAmount('');
+                  setMonthlyDepositAmount('');
+                  setYearlyDepositAmount('');
                   setIsDepositModalOpen(true); 
                 }}
                 className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-all shadow-sm"
@@ -1681,56 +1737,77 @@ export const AdminDashboard = () => {
                       type="month" 
                       value={depositMonth} 
                       onChange={(e) => {
-                        setDepositMonth(e.target.value);
+                        const newMonth = e.target.value;
+                        setDepositMonth(newMonth);
                         setSelectedMemberIds([]);
                         setDepositAmount('');
+                        setMonthlyDepositAmount('');
+                        setYearlyDepositAmount('');
+                        
+                        if (settings.startDate && newMonth < settings.startDate) {
+                          setStatusMessage({ 
+                            type: 'error', 
+                            text: `Warning: Selected month is before the group start date (${settings.startDate})` 
+                          });
+                        } else {
+                          setStatusMessage(null);
+                        }
                       }}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500"
+                      className={`w-full px-4 py-2 border rounded-xl focus:ring-indigo-500 focus:border-indigo-500 ${
+                        settings.startDate && depositMonth < settings.startDate ? 'border-red-300 bg-red-50' : 'border-gray-300'
+                      }`}
                     />
+                    {settings.startDate && depositMonth < settings.startDate && (
+                      <p className="text-[10px] text-red-600 mt-1 font-medium">Month is before start date</p>
+                    )}
                   </div>
                   <div className="w-1/2">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      {depositView === 'pending' 
-                        ? (selectedMemberIds.length > 1 ? 'Bulk Deposit Info' : 'Deposit Amount (৳)') 
-                        : 'Updated Total Amount (৳)'}
-                    </label>
-                    {depositView === 'pending' && selectedMemberIds.length > 1 ? (
-                      <div className="px-4 py-2 bg-indigo-50 text-indigo-700 rounded-xl text-xs font-medium border border-indigo-100 h-[42px] flex items-center">
-                        Remaining monthly contribution applied to each
-                      </div>
-                    ) : (
-                      <input 
-                        required 
-                        type="number" 
-                        value={depositAmount} 
-                        onChange={(e) => setDepositAmount(e.target.value)}
-                        max={(() => {
-                          if (selectedMemberIds.length === 1) {
-                            const member = members.find(m => m.id === selectedMemberIds[0]);
-                            if (member) {
-                              const isYearly = depositType === 'yearly';
-                              const targetAmount = isYearly ? (member.yearlyFixedDeposit || 0) : getExpectedMonthlyAmount(member, depositMonth);
-                              
-                              if (depositView === 'pending') {
-                                if (isYearly) {
-                                  return targetAmount - (member.totalYearlyPaid || 0);
-                                } else {
-                                  const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === depositMonth && (t.type || 'monthly') === 'monthly');
-                                  const alreadyPaid = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
-                                  return targetAmount - alreadyPaid;
-                                }
-                              } else {
-                                return targetAmount;
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Monthly (৳)</label>
+                        <input 
+                          required 
+                          type="number" 
+                          value={monthlyDepositAmount} 
+                          onChange={(e) => setMonthlyDepositAmount(e.target.value)}
+                          max={(() => {
+                            if (selectedMemberIds.length === 1) {
+                              const member = members.find(m => m.id === selectedMemberIds[0]);
+                              if (member) {
+                                const targetAmount = getExpectedMonthlyAmount(member, depositMonth);
+                                const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === depositMonth && (t.type || 'monthly') === 'monthly');
+                                const alreadyPaid = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
+                                return Math.max(0, targetAmount - alreadyPaid);
                               }
                             }
-                          }
-                          return undefined;
-                        })()}
-                        min="0"
-                        placeholder="e.g., 1000"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500" 
-                      />
-                    )}
+                            return undefined;
+                          })()}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500" 
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Yearly (৳)</label>
+                        <input 
+                          required 
+                          type="number" 
+                          value={yearlyDepositAmount} 
+                          onChange={(e) => setYearlyDepositAmount(e.target.value)}
+                          max={(() => {
+                            if (selectedMemberIds.length === 1) {
+                              const member = members.find(m => m.id === selectedMemberIds[0]);
+                              if (member) {
+                                const currentYearCycleStart = getYearlyCycleStart(depositMonth, settings.startDate);
+                                const targetAmount = getYearlyTargetWithCarryover(member, transactions, settings, currentYearCycleStart);
+                                const currentTotal = getYearlyPaidInCycle(member, transactions, currentYearCycleStart);
+                                return Math.max(0, targetAmount - currentTotal);
+                              }
+                            }
+                            return undefined;
+                          })()}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500" 
+                        />
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -1817,14 +1894,15 @@ export const AdminDashboard = () => {
                                   if (newSelected.length === 1) {
                                     const selectedMember = members.find(m => m.id === newSelected[0]);
                                     if (selectedMember) {
+                                      const mTransactions = transactions.filter(t => t.memberId === selectedMember.id && t.month === depositMonth);
                                       if (depositView === 'pending') {
-                                        const mTransactions = transactions.filter(t => t.memberId === selectedMember.id && t.month === depositMonth);
                                         const alreadyPaid = mTransactions.reduce((sum, t) => sum + t.amount, 0);
-                                        setDepositAmount(String(selectedMember.monthlyContribution - alreadyPaid));
+                                        setDepositAmount(String(getExpectedMonthlyAmount(selectedMember, depositMonth) - alreadyPaid));
                                       } else {
-                                        const mTransactions = transactions.filter(t => t.memberId === selectedMember.id && t.month === depositMonth);
-                                        const alreadyPaid = mTransactions.reduce((sum, t) => sum + t.amount, 0);
-                                        setDepositAmount(String(alreadyPaid));
+                                        const monthlyPaid = mTransactions.filter(t => (t.type || 'monthly') === 'monthly').reduce((sum, t) => sum + t.amount, 0);
+                                        const yearlyPaid = mTransactions.filter(t => t.type === 'yearly').reduce((sum, t) => sum + t.amount, 0);
+                                        setMonthlyDepositAmount(String(monthlyPaid));
+                                        setYearlyDepositAmount(String(yearlyPaid));
                                       }
                                     }
                                   }
@@ -1837,12 +1915,14 @@ export const AdminDashboard = () => {
                               </div>
                             </div>
                             <div className="text-right">
-                              <p className="text-xs font-bold text-gray-900 leading-none">
-                                {formatCurrency(paidThisMonth)} / {formatCurrency(getExpectedMonthlyAmount(member, depositMonth))}
-                              </p>
-                              <p className="text-[10px] text-gray-400 mt-1">
-                                {depositView === 'pending' ? 'Paid so far' : 'Total Paid'}
-                              </p>
+                              <div className="flex flex-col items-end">
+                                <p className="text-xs font-bold text-gray-900 leading-none">
+                                  M: {formatCurrency(transactions.filter(t => t.memberId === member.id && t.month === depositMonth && (t.type || 'monthly') === 'monthly').reduce((sum, t) => sum + t.amount, 0))}
+                                </p>
+                                <p className="text-[10px] font-bold text-amber-600 mt-1">
+                                  Y: {formatCurrency(transactions.filter(t => t.memberId === member.id && t.month === depositMonth && t.type === 'yearly').reduce((sum, t) => sum + t.amount, 0))}
+                                </p>
+                              </div>
                             </div>
                           </label>
                         );
@@ -1853,15 +1933,15 @@ export const AdminDashboard = () => {
 
                 <div className="pt-4 flex gap-3">
                   <button type="button" onClick={() => { setIsDepositModalOpen(false); setSelectedMemberIds([]); }} className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50">Cancel</button>
-                  {depositView === 'pending' && (
-                    <button 
-                      type="submit" 
-                      disabled={selectedMemberIds.length === 0}
-                      className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Confirm {selectedMemberIds.length} Deposit(s)
-                    </button>
-                  )}
+                  <button 
+                    type="submit" 
+                    disabled={selectedMemberIds.length === 0 || (settings.startDate && depositMonth < settings.startDate)}
+                    className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {depositView === 'pending' 
+                      ? `Confirm ${selectedMemberIds.length} Deposit(s)` 
+                      : 'Update Deposits'}
+                  </button>
                 </div>
               </form>
             </motion.div>
