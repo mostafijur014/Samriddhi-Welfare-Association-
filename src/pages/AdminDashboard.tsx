@@ -17,7 +17,7 @@ import {
   AlertTriangle, PiggyBank, Users, TrendingUp, Wallet, GripVertical
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList } from 'recharts';
 
 import { 
   DndContext, 
@@ -680,6 +680,23 @@ export const AdminDashboard = () => {
     settings.duration
   ));
 
+  const CustomLabel = (props: any) => {
+    const { x, y, width, value, label } = props;
+    if (!value || value <= 0) return null;
+    return (
+      <text 
+        x={x + width / 2} 
+        y={y - 6} 
+        fill="#9ca3af" 
+        textAnchor="middle" 
+        fontSize={10} 
+        fontWeight="bold"
+      >
+        {label}
+      </text>
+    );
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
@@ -1189,8 +1206,12 @@ export const AdminDashboard = () => {
                   contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}}
                   formatter={(value: number) => [formatCurrency(value), '']}
                 />
-                <Bar dataKey="monthly" stackId="a" fill="#10b981" radius={[0, 0, 0, 0]} maxBarSize={32} />
-                <Bar dataKey="yearly" stackId="a" fill="#f59e0b" radius={[4, 4, 0, 0]} maxBarSize={32} />
+                  <Bar dataKey="monthly" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={24}>
+                    <LabelList dataKey="monthly" content={<CustomLabel label="M" />} />
+                  </Bar>
+                  <Bar dataKey="yearly" fill="#f59e0b" radius={[4, 4, 0, 0]} maxBarSize={24}>
+                    <LabelList dataKey="yearly" content={<CustomLabel label="Y" />} />
+                  </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
