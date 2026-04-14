@@ -2,12 +2,14 @@
  * Calculates the final balance based on the provided formula:
  * A = P × (1 + r/n)^(n×t)
  * 
- * @param P Total deposited money
+ * @param monthlyDeposited Total monthly deposited money
+ * @param yearlyPaid Total yearly paid money
  * @param annualRate Annual interest rate (as a percentage, e.g., 5 for 5%)
  * @param durationMonths Duration in months
  * @returns { finalBalance: number, interestEarned: number }
  */
-export const calculateInterest = (P: number, annualRate: number, durationMonths: number) => {
+export const calculateInterest = (monthlyDeposited: number, yearlyPaid: number, annualRate: number, durationMonths: number) => {
+  const P = monthlyDeposited + yearlyPaid;
   if (P <= 0 || annualRate <= 0 || durationMonths <= 0) {
     return { finalBalance: P, interestEarned: 0 };
   }

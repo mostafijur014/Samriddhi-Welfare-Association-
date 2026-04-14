@@ -2,6 +2,11 @@ import { useState, useEffect } from 'react';
 import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 
+export interface ContributionHistory {
+  amount: number;
+  startMonth: string; // YYYY-MM
+}
+
 export interface Member {
   id: string;
   name: string;
@@ -9,6 +14,8 @@ export interface Member {
   phone?: string;
   monthlyContribution: number;
   yearlyFixedDeposit: number;
+  monthlyContributionHistory?: ContributionHistory[];
+  yearlyDepositHistory?: ContributionHistory[];
   totalDeposited: number;
   totalYearlyPaid: number;
   lastPaymentDate: string;

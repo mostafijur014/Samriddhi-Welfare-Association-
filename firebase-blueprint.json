@@ -10,6 +10,26 @@
         "phone": { "type": "string", "description": "Phone number for direct calling" },
         "monthlyContribution": { "type": "number", "description": "Agreed monthly savings amount" },
         "yearlyFixedDeposit": { "type": "number", "description": "Fixed amount to be paid yearly" },
+        "monthlyContributionHistory": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "amount": { "type": "number" },
+              "startMonth": { "type": "string" }
+            }
+          }
+        },
+        "yearlyDepositHistory": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "amount": { "type": "number" },
+              "startMonth": { "type": "string" }
+            }
+          }
+        },
         "totalDeposited": { "type": "number", "description": "Total amount deposited so far (monthly)" },
         "totalYearlyPaid": { "type": "number", "description": "Total amount paid towards yearly fixed deposit" },
         "lastPaymentDate": { "type": "string", "format": "date", "description": "Date of the last deposit" },

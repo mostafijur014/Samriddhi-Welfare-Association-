@@ -1,6 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useData } from '../hooks/useData';
 import { calculateInterest, formatCurrency } from '../utils/calculations';
+import { 
+  getExpectedMonthlyAmount, 
+  getTotalExpectedMonthly, 
+  getYearlyCycleStart, 
+  getYearlyTargetWithCarryover,
+  getYearlyPaidInCycle
+} from '../utils/financials';
 import { Users, TrendingUp, PiggyBank, Wallet, Search, Filter, AlertTriangle, Calendar, X, Clock, Phone, Mail } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
@@ -100,6 +107,7 @@ export const PublicView = () => {
   // Calculate total interest by summing individual member interests
   const memberCalculations = members.map(m => calculateInterest(
     m.totalDeposited,
+    m.totalYearlyPaid || 0,
     settings.interestRate,
     settings.duration
   ));
@@ -130,20 +138,21 @@ export const PublicView = () => {
   });
 
   // Column 2: Who completed their deposit this month
-  const column2Data = column1Data.filter(m => m.paidThisMonth >= m.monthlyContribution);
+  const column2Data = column1Data.filter(m => m.paidThisMonth >= getExpectedMonthlyAmount(m, currentMonth));
 
   // Column 3: Due person information (total dues across all months)
   const currentDay = new Date().getDate();
   const column3Data = members.map(member => {
-    const monthsSinceStart = allMonths.length;
-    const expectedTotal = monthsSinceStart * member.monthlyContribution;
+    const expectedTotal = getTotalExpectedMonthly(member, settings, currentMonth);
     const totalDue = Math.max(0, expectedTotal - member.totalDeposited);
     
     let dueColor = 'red'; 
     let shouldShow = totalDue > 0;
 
+    const currentExpected = getExpectedMonthlyAmount(member, currentMonth);
+
     // If they only owe for the current month (or less)
-    if (totalDue <= member.monthlyContribution) {
+    if (totalDue <= currentExpected) {
       if (currentDay < (settings.dueStartDate || 15)) {
         shouldShow = false; 
       } else if (currentDay < 17) {
@@ -160,6 +169,23 @@ export const PublicView = () => {
 
     return { ...member, totalDue, dueColor, shouldShow };
   }).filter(m => m.shouldShow);
+
+  // Yearly Columns Logic
+  const currentYearCycleStart = getYearlyCycleStart(currentMonth, settings.startDate);
+  
+  const yearlyColumn1Data = members.map(member => {
+    const target = getYearlyTargetWithCarryover(member, transactions, settings, currentYearCycleStart);
+    const paid = getYearlyPaidInCycle(member, transactions, currentYearCycleStart);
+    return {
+      ...member,
+      yearlyTarget: target,
+      yearlyPaid: paid,
+      isComplete: paid >= target && target > 0
+    };
+  });
+
+  const yearlyColumn2Data = yearlyColumn1Data.filter(m => m.isComplete);
+  const yearlyColumn3Data = yearlyColumn1Data.filter(m => !m.isComplete && m.yearlyTarget > 0);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -255,7 +281,7 @@ export const PublicView = () => {
             {column1Data.map(member => (
               <div key={member.id} className="flex items-center justify-between p-2 rounded-xl hover:bg-gray-50 transition-colors border border-transparent hover:border-gray-100">
                 <div className="flex items-center gap-3">
-                  <div className={`w-2 h-2 rounded-full ${member.paidThisMonth >= member.monthlyContribution ? 'bg-green-500' : member.paidThisMonth > 0 ? 'bg-yellow-500' : 'bg-red-500'}`} />
+                  <div className={`w-2 h-2 rounded-full ${member.paidThisMonth >= getExpectedMonthlyAmount(member, currentMonth) ? 'bg-green-500' : member.paidThisMonth > 0 ? 'bg-yellow-500' : 'bg-red-500'}`} />
                   <div>
                     <p className="text-sm font-bold text-gray-900 leading-none">{member.name}</p>
                     <p className="text-[10px] text-gray-400 font-mono mt-1">{member.memberId}</p>
@@ -263,7 +289,7 @@ export const PublicView = () => {
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-black text-gray-900">{formatCurrency(member.paidThisMonth)}</p>
-                  <p className="text-[9px] text-gray-400 uppercase font-bold">Target: {formatCurrency(member.monthlyContribution)}</p>
+                  <p className="text-[9px] text-gray-400 uppercase font-bold">Target: {formatCurrency(getExpectedMonthlyAmount(member, currentMonth))}</p>
                 </div>
               </div>
             ))}
@@ -374,6 +400,108 @@ export const PublicView = () => {
         </div>
       </div>
 
+      {/* Yearly Fixed Deposit Status Section */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        {/* Column 1: Yearly Fixed Deposits */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col h-[400px]">
+          <div className="bg-amber-600 px-4 py-3 flex items-center justify-between">
+            <h3 className="text-sm font-bold text-white uppercase tracking-wider">Yearly Deposits</h3>
+            <span className="text-[10px] bg-amber-500 text-white px-2 py-0.5 rounded-full font-bold">
+              {new Date().getFullYear()}
+            </span>
+          </div>
+          <div className="p-4 overflow-y-auto flex-grow space-y-3">
+            {yearlyColumn1Data.map(member => (
+              <div key={member.id} className="flex items-center justify-between p-2 rounded-xl hover:bg-gray-50 transition-colors border border-transparent hover:border-gray-100">
+                <div className="flex items-center gap-3">
+                  <div className={`w-2 h-2 rounded-full ${member.isComplete ? 'bg-green-500' : (member.totalYearlyPaid || 0) > 0 ? 'bg-yellow-500' : 'bg-red-500'}`} />
+                  <div>
+                    <p className="text-sm font-bold text-gray-900 leading-none">{member.name}</p>
+                    <p className="text-[10px] text-gray-400 font-mono mt-1">{member.memberId}</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-black text-gray-900">{formatCurrency(member.totalYearlyPaid || 0)}</p>
+                  <p className="text-[9px] text-gray-400 uppercase font-bold">Target: {formatCurrency(member.yearlyFixedDeposit || 0)}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Column 2: Yearly Deposit Complete */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col h-[400px]">
+          <div className="bg-green-600 px-4 py-3 flex items-center justify-between">
+            <h3 className="text-sm font-bold text-white uppercase tracking-wider">Yearly Complete</h3>
+            <span className="text-[10px] bg-green-500 text-white px-2 py-0.5 rounded-full font-bold">
+              {yearlyColumn2Data.length} Members
+            </span>
+          </div>
+          <div className="p-4 overflow-y-auto flex-grow space-y-3">
+            {yearlyColumn2Data.length > 0 ? (
+              yearlyColumn2Data.map(member => (
+                <div key={member.id} className="flex items-center justify-between p-2 rounded-xl bg-green-50 border border-green-100">
+                  <div className="flex items-center gap-3">
+                    <div className="w-6 h-6 rounded-full bg-green-200 flex items-center justify-center">
+                      <PiggyBank className="w-3.5 h-3.5 text-green-700" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-green-900 leading-none">{member.name}</p>
+                      <p className="text-[10px] text-green-600 font-mono mt-1">{member.memberId}</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-black text-green-700">{formatCurrency(member.yearlyPaid)}</p>
+                    <p className="text-[9px] text-green-600 uppercase font-bold">Success</p>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full text-center p-6">
+                <Clock className="w-10 h-10 text-gray-200 mb-2" />
+                <p className="text-sm text-gray-400 font-medium">No completions yet this year</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Column 3: Yearly Deposit Due */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col h-[400px]">
+          <div className="bg-red-600 px-4 py-3 flex items-center justify-between">
+            <h3 className="text-sm font-bold text-white uppercase tracking-wider">Yearly Due</h3>
+            <span className="text-[10px] bg-red-500 text-white px-2 py-0.5 rounded-full font-bold">
+              {yearlyColumn3Data.length} Pending
+            </span>
+          </div>
+          <div className="p-4 overflow-y-auto flex-grow space-y-3">
+            {yearlyColumn3Data.length > 0 ? (
+              yearlyColumn3Data.map(member => (
+                <div key={member.id} className="flex items-center justify-between p-2 rounded-xl bg-red-50 border border-red-100">
+                  <div className="flex items-center gap-3">
+                    <div className="w-6 h-6 rounded-full bg-red-200 flex items-center justify-center">
+                      <AlertTriangle className="w-3.5 h-3.5 text-red-700" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-red-900 leading-none">{member.name}</p>
+                      <p className="text-[10px] text-red-600 font-mono mt-1">{member.memberId}</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-black text-red-700">{formatCurrency(member.yearlyTarget - member.yearlyPaid)}</p>
+                    <p className="text-[9px] text-red-600 uppercase font-bold">Remaining</p>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full text-center p-6">
+                <Users className="w-10 h-10 text-green-100 mb-2" />
+                <p className="text-sm text-green-600 font-medium">All members completed yearly deposit!</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* Search and Filter */}
       <div className="mb-6 flex flex-col lg:flex-row items-center justify-between gap-4">
         <div className="flex flex-col sm:flex-row items-center gap-4 w-full lg:w-auto">
@@ -436,13 +564,14 @@ export const PublicView = () => {
               {filteredMembers.map((member) => {
                 const { finalBalance } = calculateInterest(
                   member.totalDeposited,
+                  member.totalYearlyPaid || 0,
                   settings.interestRate,
                   settings.duration
                 );
                 
                 const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === viewMonth);
                 const totalForViewMonth = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
-                const isPaidInViewMonth = totalForViewMonth >= member.monthlyContribution;
+                const isPaidInViewMonth = totalForViewMonth >= getExpectedMonthlyAmount(member, viewMonth);
 
                 return (
                   <tr key={member.id} className="hover:bg-gray-50 transition-colors">
@@ -462,7 +591,7 @@ export const PublicView = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex flex-col">
-                        <span className="text-sm text-gray-900 font-medium">{formatCurrency(member.monthlyContribution)}</span>
+                        <span className="text-sm text-gray-900 font-medium">{formatCurrency(getExpectedMonthlyAmount(member, viewMonth))}</span>
                         <span className="text-[10px] text-gray-500">Yearly: {formatCurrency(member.yearlyFixedDeposit || 0)}</span>
                       </div>
                     </td>
@@ -539,19 +668,75 @@ export const PublicView = () => {
               </div>
               
               <div className="p-6 max-h-[60vh] overflow-y-auto">
+                {(() => {
+                  const member = members.find(m => m.id === selectedMemberForDetails);
+                  if (!member) return null;
+                  
+                  const { finalBalance } = calculateInterest(
+                    member.totalDeposited,
+                    member.totalYearlyPaid || 0,
+                    settings.interestRate,
+                    settings.duration
+                  );
+
+                  const cycleStart = getYearlyCycleStart(currentMonth, settings.startDate);
+                  const yearlyTarget = getYearlyTargetWithCarryover(member, transactions, settings, cycleStart);
+                  const yearlyPaid = getYearlyPaidInCycle(member, transactions, cycleStart);
+
+                  return (
+                    <div className="mb-6 grid grid-cols-2 gap-3">
+                      <div className="bg-indigo-50 p-3 rounded-xl border border-indigo-100">
+                        <p className="text-[10px] text-indigo-600 font-bold uppercase">Final Balance</p>
+                        <p className="text-lg font-black text-indigo-900">{formatCurrency(finalBalance)}</p>
+                      </div>
+                      <div className="bg-amber-50 p-3 rounded-xl border border-amber-100">
+                        <p className="text-[10px] text-amber-600 font-bold uppercase">Yearly Progress</p>
+                        <p className="text-lg font-black text-amber-900">
+                          {formatCurrency(yearlyPaid)}
+                          <span className="text-[10px] text-amber-600 font-medium block">Target: {formatCurrency(yearlyTarget)}</span>
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 <div className="space-y-3">
+                  {(() => {
+                    const member = members.find(m => m.id === selectedMemberForDetails);
+                    if (member?.monthlyContributionHistory && member.monthlyContributionHistory.length > 1) {
+                      return (
+                        <div className="mb-6">
+                          <h4 className="text-xs font-bold text-gray-400 uppercase mb-2">Monthly Contribution History</h4>
+                          <div className="grid grid-cols-1 gap-2">
+                            {member.monthlyContributionHistory.slice().reverse().map((h, i) => (
+                              <div key={i} className="flex justify-between items-center text-xs p-2 bg-gray-50 rounded-lg border border-gray-100">
+                                <span className="text-gray-500 font-medium">
+                                  Started {new Date(h.startMonth + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                                </span>
+                                <span className="font-bold text-indigo-600">{formatCurrency(h.amount)} / month</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
+
+                  <h4 className="text-xs font-bold text-gray-400 uppercase mb-2">Monthly Payments</h4>
                   {allMonths.map(month => {
                     const member = members.find(m => m.id === selectedMemberForDetails);
                     if (!member) return null;
                     
-                    const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === month);
+                    const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === month && (t.type || 'monthly') === 'monthly');
                     const totalForMonth = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
+                    const expectedForMonth = getExpectedMonthlyAmount(member, month);
                     
                     let statusText = 'Not Paid';
                     let statusColor = 'text-red-600 bg-red-50 border-red-100';
                     let dotColor = 'bg-red-500';
                     
-                    if (totalForMonth >= member.monthlyContribution) {
+                    if (totalForMonth >= expectedForMonth) {
                       statusText = 'Fully Paid';
                       statusColor = 'text-blue-700 bg-blue-50 border-blue-100';
                       dotColor = 'bg-blue-600';
@@ -570,7 +755,7 @@ export const PublicView = () => {
                               {new Date(month + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
                             </p>
                             <p className="text-[10px] opacity-70 uppercase font-bold tracking-wider">
-                              Target: {formatCurrency(member.monthlyContribution)}
+                              Target: {formatCurrency(expectedForMonth)}
                             </p>
                           </div>
                         </div>
