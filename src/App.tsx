@@ -47,7 +47,7 @@ export default function App() {
           </main>
           <footer className="bg-white border-t border-gray-200 py-8">
             <div className="max-w-7xl mx-auto px-4 text-center text-gray-500 text-sm">
-              &copy; {new Date().getFullYear()} Savings Group Manager. All rights reserved.
+              &copy; {new Date().getFullYear()} Samriddhi Welfare Association. All rights reserved. Developed By MMR
             </div>
           </footer>
         </div>
