@@ -1,0 +1,56 @@
+{
+  "entities": {
+    "Member": {
+      "title": "Member",
+      "description": "A member of the savings group",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Full name of the member" },
+        "memberId": { "type": "string", "description": "Unique identifier for the member" },
+        "phone": { "type": "string", "description": "Phone number for direct calling" },
+        "monthlyContribution": { "type": "number", "description": "Agreed monthly savings amount" },
+        "totalDeposited": { "type": "number", "description": "Total amount deposited so far" },
+        "lastPaymentDate": { "type": "string", "format": "date", "description": "Date of the last deposit" },
+        "status": { "type": "string", "enum": ["Active", "Inactive"], "description": "Current status of the member" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "memberId", "monthlyContribution", "totalDeposited", "status"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "A deposit record",
+      "type": "object",
+      "properties": {
+        "memberId": { "type": "string", "description": "ID of the member who made the deposit" },
+        "amount": { "type": "number", "description": "Amount deposited" },
+        "date": { "type": "string", "format": "date-time", "description": "When the deposit was made" },
+        "month": { "type": "string", "description": "The month this deposit is for (e.g., '2023-10')" }
+      },
+      "required": ["memberId", "amount", "date", "month"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Global interest and group settings",
+      "type": "object",
+      "properties": {
+        "interestRate": { "type": "number", "description": "Annual interest rate in percentage" },
+        "duration": { "type": "number", "description": "Duration in months for DPS calculation" },
+        "startDate": { "type": "string", "description": "The month the savings group started (e.g., '2023-01')" },
+        "announcement": { "type": "string", "description": "Scrolling announcement text" },
+        "showAnnouncement": { "type": "boolean", "description": "Whether to show the announcement bar" },
+        "announcementSpeed": { "type": "number", "description": "Scrolling speed in seconds (higher is slower)" },
+        "tagline1": { "type": "string", "description": "Primary tagline text" },
+        "tagline2": { "type": "string", "description": "Secondary tagline text" },
+        "heroTitle": { "type": "string", "description": "Main title on the public page" },
+        "heroSubtitle": { "type": "string", "description": "Subtitle on the public page" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["interestRate", "duration", "startDate"]
+    }
+  },
+  "firestore": {
+    "/members": { "schema": "Member", "description": "Collection of group members" },
+    "/transactions": { "schema": "Transaction", "description": "History of all deposits" },
+    "/settings": { "schema": "Settings", "description": "Global configuration" }
+  }
+}

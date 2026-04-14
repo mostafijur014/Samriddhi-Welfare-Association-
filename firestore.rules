@@ -1,0 +1,112 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: members
+    // Fields:
+    //   - name: string (required)
+    //   - memberId: string (required)
+    //   - phone: string (optional)
+    //   - monthlyContribution: number (required)
+    //   - totalDeposited: number (required)
+    //   - lastPaymentDate: string (optional)
+    //   - status: string (required, enum: ["Active", "Inactive"])
+    //   - createdAt: string (optional)
+    //
+    // Collection: transactions
+    // Fields:
+    //   - memberId: string (required)
+    //   - amount: number (required)
+    //   - date: string (required)
+    //   - month: string (required)
+    //
+    // Collection: settings
+    // Fields:
+    //   - interestRate: number (required)
+    //   - duration: number (required)
+    //   - startDate: string (required)
+    //   - announcement: string (optional)
+    //   - showAnnouncement: bool (optional)
+    //   - announcementSpeed: number (optional)
+    //   - tagline1: string (optional)
+    //   - tagline2: string (optional)
+    //   - updatedAt: string (optional)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+        (request.auth.token.email == "admin@prosperity.local");
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // Domain Validators
+    
+    function isValidMember(data) {
+      return hasRequiredFields(['name', 'memberId', 'monthlyContribution', 'totalDeposited', 'status']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.memberId is string && data.memberId.size() > 0 &&
+             data.monthlyContribution is number && data.monthlyContribution >= 0 &&
+             data.totalDeposited is number && data.totalDeposited >= 0 &&
+             data.status in ['Active', 'Inactive'];
+    }
+
+    function isValidTransaction(data) {
+      return hasRequiredFields(['memberId', 'amount', 'date', 'month']) &&
+             data.memberId is string &&
+             data.amount is number && data.amount > 0 &&
+             data.date is string &&
+             data.month is string;
+    }
+
+    function isValidSettings(data) {
+      return hasRequiredFields(['interestRate', 'duration', 'startDate']) &&
+             data.interestRate is number && data.interestRate >= 0 &&
+             data.duration is number && data.duration > 0 &&
+             data.startDate is string;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    // Members collection
+    match /members/{memberId} {
+      allow read: if true; // Public view needs to see member list
+      allow create, update: if isAdmin() && isValidMember(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // Transactions collection
+    match /transactions/{transactionId} {
+      allow read: if true; // Public view needs to see transactions
+      allow create, update: if isAdmin() && isValidTransaction(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // Settings collection
+    match /settings/{settingId} {
+      allow read: if true; // Public view needs settings
+      allow create, update: if isAdmin() && isValidSettings(request.resource.data);
+      allow delete: if isAdmin();
+    }
+  }
+}
