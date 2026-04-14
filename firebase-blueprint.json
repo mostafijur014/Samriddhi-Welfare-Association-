@@ -9,7 +9,9 @@
         "memberId": { "type": "string", "description": "Unique identifier for the member" },
         "phone": { "type": "string", "description": "Phone number for direct calling" },
         "monthlyContribution": { "type": "number", "description": "Agreed monthly savings amount" },
-        "totalDeposited": { "type": "number", "description": "Total amount deposited so far" },
+        "yearlyFixedDeposit": { "type": "number", "description": "Fixed amount to be paid yearly" },
+        "totalDeposited": { "type": "number", "description": "Total amount deposited so far (monthly)" },
+        "totalYearlyPaid": { "type": "number", "description": "Total amount paid towards yearly fixed deposit" },
         "lastPaymentDate": { "type": "string", "format": "date", "description": "Date of the last deposit" },
         "status": { "type": "string", "enum": ["Active", "Inactive"], "description": "Current status of the member" },
         "createdAt": { "type": "string", "format": "date-time" }
@@ -24,7 +26,8 @@
         "memberId": { "type": "string", "description": "ID of the member who made the deposit" },
         "amount": { "type": "number", "description": "Amount deposited" },
         "date": { "type": "string", "format": "date-time", "description": "When the deposit was made" },
-        "month": { "type": "string", "description": "The month this deposit is for (e.g., '2023-10')" }
+        "month": { "type": "string", "description": "The month this deposit is for (e.g., '2023-10')" },
+        "type": { "type": "string", "enum": ["monthly", "yearly"], "description": "Type of deposit" }
       },
       "required": ["memberId", "amount", "date", "month"]
     },

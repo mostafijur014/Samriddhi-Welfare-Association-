@@ -97,10 +97,19 @@ const SortableMemberRow: React.FC<{
         )}
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-        {formatCurrency(member.monthlyContribution)}
+        <div className="flex flex-col">
+          <span className="font-medium">{formatCurrency(member.monthlyContribution)}</span>
+          <span className="text-[10px] text-gray-500">Yearly: {formatCurrency(member.yearlyFixedDeposit || 0)}</span>
+        </div>
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-semibold">
-        {formatCurrency(member.totalDeposited)}
+        <div className="flex flex-col">
+          <span>{formatCurrency(member.totalDeposited)}</span>
+          <span className={`text-[10px] ${(member.totalYearlyPaid || 0) >= (member.yearlyFixedDeposit || 0) ? 'text-green-600 font-bold' : 'text-amber-600'}`}>
+            Y: {formatCurrency(member.totalYearlyPaid || 0)}
+            {(member.totalYearlyPaid || 0) >= (member.yearlyFixedDeposit || 0) && member.yearlyFixedDeposit > 0 && ' ✓'}
+          </span>
+        </div>
       </td>
       <td className="px-6 py-4 whitespace-nowrap">
         <div className="flex flex-wrap gap-1 max-w-[150px]">
@@ -160,6 +169,7 @@ export const AdminDashboard = () => {
   const [depositView, setDepositView] = useState<'pending' | 'completed'>('pending');
   const [depositAmount, setDepositAmount] = useState('');
   const [depositMonth, setDepositMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [depositType, setDepositType] = useState<'monthly' | 'yearly'>('monthly');
   const [currentTime, setCurrentTime] = useState(new Date());
 
   const sensors = useSensors(
@@ -207,6 +217,7 @@ export const AdminDashboard = () => {
     memberId: '',
     phone: '',
     monthlyContribution: '',
+    yearlyFixedDeposit: '',
     status: 'Active' as 'Active' | 'Inactive'
   });
 
@@ -359,8 +370,10 @@ export const AdminDashboard = () => {
       memberId: memberForm.memberId,
       phone: memberForm.phone,
       monthlyContribution: Number(memberForm.monthlyContribution),
+      yearlyFixedDeposit: Number(memberForm.yearlyFixedDeposit),
       status: memberForm.status,
       totalDeposited: editingMember ? editingMember.totalDeposited : 0,
+      totalYearlyPaid: editingMember ? (editingMember.totalYearlyPaid || 0) : 0,
       lastPaymentDate: editingMember ? editingMember.lastPaymentDate : '',
       createdAt: editingMember ? editingMember.createdAt : new Date().toISOString()
     };
@@ -381,7 +394,7 @@ export const AdminDashboard = () => {
       setStatusMessage({ type: 'success', text: `Member ${editingMember ? 'updated' : 'added'} successfully` });
       setIsMemberModalOpen(false);
       setEditingMember(null);
-      setMemberForm({ name: '', memberId: '', phone: '', monthlyContribution: '', status: 'Active' });
+      setMemberForm({ name: '', memberId: '', phone: '', monthlyContribution: '', yearlyFixedDeposit: '', status: 'Active' });
     } catch (err) {
       handleFirestoreError(err, editingMember ? OperationType.UPDATE : OperationType.CREATE, editingMember ? `members/${editingMember.id}` : 'members');
     }
@@ -417,21 +430,31 @@ export const AdminDashboard = () => {
         const member = members.find(m => m.id === memberId);
         if (!member) continue;
 
-        const monthTransactions = transactions.filter(t => t.memberId === memberId && t.month === month);
-        const alreadyPaid = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
+        const isYearly = depositType === 'yearly';
+        const targetAmount = isYearly ? (member.yearlyFixedDeposit || 0) : member.monthlyContribution;
+        const currentTotal = isYearly ? (member.totalYearlyPaid || 0) : member.totalDeposited;
+
+        const monthTransactions = transactions.filter(t => t.memberId === memberId && t.month === month && (t.type || 'monthly') === depositType);
+        const alreadyPaidThisMonth = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
 
         if (depositView === 'pending') {
           let amountToDeposit: number;
           if (targetIds.length > 1) {
-            amountToDeposit = Number(member.monthlyContribution) - alreadyPaid;
+            amountToDeposit = Number(targetAmount) - alreadyPaidThisMonth;
           } else {
             amountToDeposit = Number(depositAmount);
             if (isNaN(amountToDeposit) || amountToDeposit <= 0) {
               setStatusMessage({ type: 'error', text: 'Please enter a valid amount' });
               return;
             }
-            if (alreadyPaid + amountToDeposit > member.monthlyContribution) {
-              setStatusMessage({ type: 'error', text: `Total deposit for ${member.name} cannot exceed ${member.monthlyContribution}` });
+            
+            if (!isYearly && alreadyPaidThisMonth + amountToDeposit > targetAmount) {
+              setStatusMessage({ type: 'error', text: `Total monthly deposit for ${member.name} cannot exceed ${targetAmount}` });
+              return;
+            }
+            
+            if (isYearly && currentTotal + amountToDeposit > targetAmount) {
+              setStatusMessage({ type: 'error', text: `Total yearly deposit for ${member.name} cannot exceed ${targetAmount}` });
               return;
             }
           }
@@ -443,14 +466,20 @@ export const AdminDashboard = () => {
               amount: amountToDeposit,
               date: now.toISOString(),
               month,
+              type: depositType,
               createdAt: serverTimestamp()
             }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'transactions'));
 
             // 2. Update Member
-            await updateDoc(doc(db, 'members', memberId), {
-              totalDeposited: (Number(member.totalDeposited) || 0) + amountToDeposit,
+            const updateData: any = {
               lastPaymentDate: now.toISOString()
-            }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `members/${memberId}`));
+            };
+            if (isYearly) {
+              updateData.totalYearlyPaid = currentTotal + amountToDeposit;
+            } else {
+              updateData.totalDeposited = (Number(member.totalDeposited) || 0) + amountToDeposit;
+            }
+            await updateDoc(doc(db, 'members', memberId), updateData).catch(err => handleFirestoreError(err, OperationType.UPDATE, `members/${memberId}`));
           }
         } else {
           // Completed View (Update case)
@@ -459,15 +488,21 @@ export const AdminDashboard = () => {
             setStatusMessage({ type: 'error', text: 'Please enter a valid amount' });
             return;
           }
-          if (newTotal > member.monthlyContribution) {
-            setStatusMessage({ type: 'error', text: `Total deposit for ${member.name} cannot exceed ${member.monthlyContribution}` });
+          
+          if (!isYearly && newTotal > targetAmount) {
+            setStatusMessage({ type: 'error', text: `Total monthly deposit for ${member.name} cannot exceed ${targetAmount}` });
             return;
           }
 
-          const diff = newTotal - alreadyPaid;
+          if (isYearly && newTotal > targetAmount) {
+            setStatusMessage({ type: 'error', text: `Total yearly deposit for ${member.name} cannot exceed ${targetAmount}` });
+            return;
+          }
+
+          const diff = newTotal - alreadyPaidThisMonth;
           if (diff === 0) continue;
 
-          // Consolidate transactions for this month into one
+          // Consolidate transactions for this month/type into one
           for (const t of monthTransactions) {
             await deleteDoc(doc(db, 'transactions', t.id)).catch(err => handleFirestoreError(err, OperationType.DELETE, `transactions/${t.id}`));
           }
@@ -478,15 +513,21 @@ export const AdminDashboard = () => {
               amount: newTotal,
               date: now.toISOString(),
               month,
+              type: depositType,
               createdAt: serverTimestamp()
             }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'transactions'));
           }
 
           // Update Member
-          await updateDoc(doc(db, 'members', memberId), {
-            totalDeposited: (Number(member.totalDeposited) || 0) + diff,
+          const updateData: any = {
             lastPaymentDate: now.toISOString()
-          }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `members/${memberId}`));
+          };
+          if (isYearly) {
+            updateData.totalYearlyPaid = (Number(member.totalYearlyPaid) || 0) + diff;
+          } else {
+            updateData.totalDeposited = (Number(member.totalDeposited) || 0) + diff;
+          }
+          await updateDoc(doc(db, 'members', memberId), updateData).catch(err => handleFirestoreError(err, OperationType.UPDATE, `members/${memberId}`));
         }
       }
 
@@ -607,7 +648,7 @@ export const AdminDashboard = () => {
           </div>
           <div className="flex flex-wrap gap-3">
             <button 
-              onClick={() => { setEditingMember(null); setMemberForm({ name: '', memberId: '', phone: '', monthlyContribution: '', status: 'Active' }); setIsMemberModalOpen(true); }}
+              onClick={() => { setEditingMember(null); setMemberForm({ name: '', memberId: '', phone: '', monthlyContribution: '', yearlyFixedDeposit: '', status: 'Active' }); setIsMemberModalOpen(true); }}
               className="inline-flex items-center px-4 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all shadow-sm"
             >
               <Plus className="w-4 h-4 mr-2" /> Add Member
@@ -1262,8 +1303,8 @@ export const AdminDashboard = () => {
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Member</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Phone</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Monthly</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Contribution</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total Paid</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Months Paid</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
@@ -1287,6 +1328,7 @@ export const AdminDashboard = () => {
                           memberId: m.memberId,
                           phone: m.phone || '',
                           monthlyContribution: String(m.monthlyContribution),
+                          yearlyFixedDeposit: String(m.yearlyFixedDeposit || ''),
                           status: m.status
                         });
                         setIsMemberModalOpen(true);
@@ -1349,15 +1391,27 @@ export const AdminDashboard = () => {
                     className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500" 
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Monthly Contribution</label>
-                  <input 
-                    required 
-                    type="number" 
-                    value={memberForm.monthlyContribution} 
-                    onChange={(e) => setMemberForm({...memberForm, monthlyContribution: e.target.value})}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500" 
-                  />
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Monthly Contribution</label>
+                    <input 
+                      required 
+                      type="number" 
+                      value={memberForm.monthlyContribution} 
+                      onChange={(e) => setMemberForm({...memberForm, monthlyContribution: e.target.value})}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500" 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Yearly Fixed Deposit</label>
+                    <input 
+                      required 
+                      type="number" 
+                      value={memberForm.yearlyFixedDeposit} 
+                      onChange={(e) => setMemberForm({...memberForm, yearlyFixedDeposit: e.target.value})}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500" 
+                    />
+                  </div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
@@ -1397,6 +1451,22 @@ export const AdminDashboard = () => {
                 <button onClick={() => { setIsDepositModalOpen(false); setSelectedMemberIds([]); }} className="text-gray-400 hover:text-gray-600"><X className="w-6 h-6" /></button>
               </div>
               <form onSubmit={handleDeposit} className="p-6 space-y-4">
+                <div className="flex gap-4 p-1 bg-gray-100 rounded-2xl">
+                  <button
+                    type="button"
+                    onClick={() => setDepositType('monthly')}
+                    className={`flex-1 py-2 text-sm font-bold rounded-xl transition-all ${depositType === 'monthly' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                  >
+                    Monthly Contribution
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDepositType('yearly')}
+                    className={`flex-1 py-2 text-sm font-bold rounded-xl transition-all ${depositType === 'yearly' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                  >
+                    Yearly Fixed Deposit
+                  </button>
+                </div>
                 <div className="flex gap-4">
                   <div className="flex-grow">
                     <label className="block text-sm font-medium text-gray-700 mb-1">Select Month</label>
@@ -1431,12 +1501,19 @@ export const AdminDashboard = () => {
                           if (selectedMemberIds.length === 1) {
                             const member = members.find(m => m.id === selectedMemberIds[0]);
                             if (member) {
+                              const isYearly = depositType === 'yearly';
+                              const targetAmount = isYearly ? (member.yearlyFixedDeposit || 0) : member.monthlyContribution;
+                              
                               if (depositView === 'pending') {
-                                const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === depositMonth);
-                                const alreadyPaid = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
-                                return member.monthlyContribution - alreadyPaid;
+                                if (isYearly) {
+                                  return targetAmount - (member.totalYearlyPaid || 0);
+                                } else {
+                                  const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === depositMonth && (t.type || 'monthly') === 'monthly');
+                                  const alreadyPaid = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
+                                  return targetAmount - alreadyPaid;
+                                }
                               } else {
-                                return member.monthlyContribution;
+                                return targetAmount;
                               }
                             }
                           }

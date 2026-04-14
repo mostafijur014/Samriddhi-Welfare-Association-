@@ -95,6 +95,7 @@ export const PublicView = () => {
   }
 
   const totalDeposited = members.reduce((sum, m) => sum + m.totalDeposited, 0);
+  const totalYearlyPaid = members.reduce((sum, m) => sum + (m.totalYearlyPaid || 0), 0);
   
   // Calculate total interest by summing individual member interests
   const memberCalculations = members.map(m => calculateInterest(
@@ -114,8 +115,8 @@ export const PublicView = () => {
   const stats = [
     { label: 'Total Members', value: members.length, icon: Users, color: 'bg-blue-500' },
     { label: 'Total Deposited', value: formatCurrency(totalDeposited), icon: PiggyBank, color: 'bg-green-500' },
-    { label: 'Interest Earned', value: formatCurrency(totalInterest), icon: TrendingUp, color: 'bg-amber-500' },
-    { label: 'Final Balance', value: formatCurrency(totalFinal), icon: Wallet, color: 'bg-indigo-600' },
+    { label: 'Yearly Collection', value: formatCurrency(totalYearlyPaid), icon: Wallet, color: 'bg-amber-500' },
+    { label: 'Final Balance', value: formatCurrency(totalFinal), icon: TrendingUp, color: 'bg-indigo-600' },
   ];
 
   // Logic for the 3 columns
@@ -423,10 +424,10 @@ export const PublicView = () => {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Member</th>
-                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Target</th>
+                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Contribution</th>
                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Paid ({new Date(viewMonth + '-01').toLocaleDateString('en-US', { month: 'short' })})</th>
-                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Monthly Status</th>
-                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Total Deposited</th>
+                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Yearly Progress</th>
+                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Total Paid</th>
                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Final Balance</th>
                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
               </tr>
@@ -459,8 +460,11 @@ export const PublicView = () => {
                         )}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {formatCurrency(member.monthlyContribution)}
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex flex-col">
+                        <span className="text-sm text-gray-900 font-medium">{formatCurrency(member.monthlyContribution)}</span>
+                        <span className="text-[10px] text-gray-500">Yearly: {formatCurrency(member.yearlyFixedDeposit || 0)}</span>
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className={`text-sm font-bold ${isPaidInViewMonth ? 'text-green-600' : totalForViewMonth > 0 ? 'text-yellow-600' : 'text-red-600'}`}>
@@ -468,29 +472,24 @@ export const PublicView = () => {
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div 
-                        className="flex gap-1 cursor-pointer hover:opacity-80 transition-opacity"
-                        onClick={() => setSelectedMemberForDetails(member.id)}
-                      >
-                        {last3Months.map(month => {
-                          const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === month);
-                          const totalForMonth = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
-                          let bgColor = 'bg-red-500';
-                          if (totalForMonth >= member.monthlyContribution) bgColor = 'bg-blue-600';
-                          else if (totalForMonth > 0) bgColor = 'bg-yellow-500';
-                          
-                          return (
-                            <div key={month} className="flex flex-col items-center">
-                              <div className={`w-3 h-3 rounded-full ${bgColor}`} title={`${month}: ${formatCurrency(totalForMonth)}`} />
-                              <span className="text-[8px] text-gray-400 mt-0.5">{month.split('-')[1]}/{month.split('-')[0].slice(2)}</span>
-                            </div>
-                          );
-                        })}
-                        <span className="text-[10px] text-indigo-600 font-bold ml-1 self-center">Details</span>
-                      </div>
+                       <div className="flex flex-col">
+                         <div className="w-24 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                           <div 
+                             className={`h-full transition-all ${(member.totalYearlyPaid || 0) >= (member.yearlyFixedDeposit || 0) && (member.yearlyFixedDeposit || 0) > 0 ? 'bg-green-500' : 'bg-amber-500'}`}
+                             style={{ width: `${Math.min(100, ((member.totalYearlyPaid || 0) / (member.yearlyFixedDeposit || 1)) * 100)}%` }}
+                           />
+                         </div>
+                         <span className={`text-[10px] mt-1 font-bold ${(member.totalYearlyPaid || 0) >= (member.yearlyFixedDeposit || 0) && (member.yearlyFixedDeposit || 0) > 0 ? 'text-green-600' : 'text-amber-600'}`}>
+                           {formatCurrency(member.totalYearlyPaid || 0)} / {formatCurrency(member.yearlyFixedDeposit || 0)}
+                           {(member.totalYearlyPaid || 0) >= (member.yearlyFixedDeposit || 0) && (member.yearlyFixedDeposit || 0) > 0 && ' ✓'}
+                         </span>
+                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {formatCurrency(member.totalDeposited)}
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex flex-col">
+                        <span className="text-sm text-gray-900 font-semibold">{formatCurrency(member.totalDeposited)}</span>
+                        <span className="text-[10px] text-gray-500">Total Monthly</span>
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-indigo-600 font-bold">
                       {formatCurrency(finalBalance)}

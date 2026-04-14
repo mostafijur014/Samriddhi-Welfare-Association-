@@ -8,7 +8,9 @@ export interface Member {
   memberId: string;
   phone?: string;
   monthlyContribution: number;
+  yearlyFixedDeposit: number;
   totalDeposited: number;
+  totalYearlyPaid: number;
   lastPaymentDate: string;
   status: 'Active' | 'Inactive';
   createdAt: string;
@@ -21,6 +23,7 @@ export interface Transaction {
   amount: number;
   date: string;
   month: string;
+  type: 'monthly' | 'yearly';
 }
 
 export interface ContactPerson {
