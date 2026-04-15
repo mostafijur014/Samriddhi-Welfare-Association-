@@ -3,9 +3,7 @@ import { onAuthStateChanged, signInWithEmailAndPassword, User } from 'firebase/a
 import { auth } from '../firebase';
 
 // We use a virtual email domain to allow "username" style login with Firebase Auth
-const ADMIN_USERNAME = 'admin';
 const VIRTUAL_DOMAIN = 'prosperity.local';
-const ADMIN_EMAIL = `${ADMIN_USERNAME}@${VIRTUAL_DOMAIN}`;
 
 export const useAuth = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -38,7 +36,7 @@ export const useAuth = () => {
     }
   };
 
-  const isAdmin = user?.email === ADMIN_EMAIL;
+  const isAdmin = !!user;
 
   return { 
     user, 

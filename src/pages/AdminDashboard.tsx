@@ -1788,8 +1788,8 @@ export const AdminDashboard = () => {
                     Yearly Fixed Deposit
                   </button>
                 </div>
-                <div className="flex gap-4">
-                  <div className="flex-grow">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Select Month</label>
                     <input 
                       type="month" 
@@ -1819,10 +1819,9 @@ export const AdminDashboard = () => {
                       <p className="text-[10px] text-red-600 mt-1 font-medium">Month is before start date</p>
                     )}
                   </div>
-                  <div className="w-1/2">
-                    <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Monthly (৳)</label>
+                        <label className="block text-[9px] sm:text-[10px] font-bold text-gray-500 uppercase mb-1 truncate">Monthly (৳)</label>
                         <input 
                           type="number" 
                           value={monthlyDepositAmount} 
@@ -1843,11 +1842,11 @@ export const AdminDashboard = () => {
                             }
                             return undefined;
                           })()}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500" 
+                          className="w-full px-2 sm:px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500" 
                         />
                       </div>
                       <div>
-                        <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Yearly (৳)</label>
+                        <label className="block text-[9px] sm:text-[10px] font-bold text-gray-500 uppercase mb-1 truncate">Yearly (৳)</label>
                         <input 
                           type="number" 
                           value={yearlyDepositAmount} 
@@ -1891,7 +1890,7 @@ export const AdminDashboard = () => {
                             }
                             return undefined;
                           })()}
-                          className={`w-full px-3 py-2 border rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500 ${
+                          className={`w-full px-2 sm:px-3 py-2 border rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500 ${
                             (() => {
                               if (selectedMemberIds.length === 1) {
                                 const member = members.find(m => m.id === selectedMemberIds[0]);
@@ -1909,7 +1908,6 @@ export const AdminDashboard = () => {
                       </div>
                     </div>
                   </div>
-                </div>
 
                 <div>
                   <div className="flex items-center justify-between mb-2">
