@@ -1,5 +1,16 @@
 {
   "entities": {
+    "ContactPerson": {
+      "title": "ContactPerson",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "imageUrl": { "type": "string" }
+      }
+    },
     "Member": {
       "title": "Member",
       "description": "A member of the savings group",
@@ -68,6 +79,10 @@
         "heroSubtitle": { "type": "string", "description": "Subtitle on the public page" },
         "dueStartDate": { "type": "number", "description": "Day of the month when dues start appearing (e.g., 15)" },
         "dueEndDate": { "type": "number", "description": "Day of the month when dues become critical (e.g., 20)" },
+        "showContactPersons": { "type": "boolean" },
+        "contactPerson1": { "$ref": "ContactPerson" },
+        "contactPerson2": { "$ref": "ContactPerson" },
+        "contactPerson3": { "$ref": "ContactPerson" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["interestRate", "duration", "startDate"]

@@ -57,6 +57,7 @@ export interface Settings {
   showContactPersons?: boolean;
   contactPerson1?: ContactPerson;
   contactPerson2?: ContactPerson;
+  contactPerson3?: ContactPerson;
 }
 
 export const useData = () => {

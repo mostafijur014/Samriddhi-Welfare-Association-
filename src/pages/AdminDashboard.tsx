@@ -267,7 +267,8 @@ export const AdminDashboard = () => {
     dueEndDate: 20,
     showContactPersons: true,
     contactPerson1: { name: '', role: '', phone: '', email: '', imageUrl: '' },
-    contactPerson2: { name: '', role: '', phone: '', email: '', imageUrl: '' }
+    contactPerson2: { name: '', role: '', phone: '', email: '', imageUrl: '' },
+    contactPerson3: { name: '', role: '', phone: '', email: '', imageUrl: '' }
   });
 
   const [expandedSections, setExpandedSections] = useState({
@@ -299,7 +300,8 @@ export const AdminDashboard = () => {
         dueEndDate: settings.dueEndDate || 20,
         showContactPersons: settings.showContactPersons !== undefined ? settings.showContactPersons : true,
         contactPerson1: settings.contactPerson1 || { name: '', role: '', phone: '', email: '', imageUrl: '' },
-        contactPerson2: settings.contactPerson2 || { name: '', role: '', phone: '', email: '', imageUrl: '' }
+        contactPerson2: settings.contactPerson2 || { name: '', role: '', phone: '', email: '', imageUrl: '' },
+        contactPerson3: settings.contactPerson3 || { name: '', role: '', phone: '', email: '', imageUrl: '' }
       });
     }
   }, [settings]);
@@ -712,6 +714,7 @@ export const AdminDashboard = () => {
         showContactPersons: settingsForm.showContactPersons,
         contactPerson1: settingsForm.contactPerson1,
         contactPerson2: settingsForm.contactPerson2,
+        contactPerson3: settingsForm.contactPerson3,
         updatedAt: new Date().toISOString()
       };
 
@@ -1271,6 +1274,91 @@ export const AdminDashboard = () => {
                         {settingsForm.contactPerson2.imageUrl && (
                           <div className="mt-2 w-12 h-12 rounded-full overflow-hidden border border-gray-200">
                             <img src={settingsForm.contactPerson2.imageUrl} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Contact Person 3 */}
+                  <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
+                    <h4 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4 flex items-center">
+                      <div className="w-1.5 h-1.5 bg-indigo-600 rounded-full mr-2" />
+                      Contact Person 3 (Emergency)
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Full Name</label>
+                        <input 
+                          type="text" 
+                          value={settingsForm.contactPerson3.name} 
+                          onChange={(e) => setSettingsForm({...settingsForm, contactPerson3: {...settingsForm.contactPerson3, name: e.target.value}})}
+                          placeholder="Name"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Role</label>
+                        <input 
+                          type="text" 
+                          value={settingsForm.contactPerson3.role} 
+                          onChange={(e) => setSettingsForm({...settingsForm, contactPerson3: {...settingsForm.contactPerson3, role: e.target.value}})}
+                          placeholder="e.g. Emergency Contact"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Phone</label>
+                        <input 
+                          type="tel" 
+                          value={settingsForm.contactPerson3.phone} 
+                          onChange={(e) => setSettingsForm({...settingsForm, contactPerson3: {...settingsForm.contactPerson3, phone: e.target.value}})}
+                          placeholder="Phone"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Email</label>
+                        <input 
+                          type="email" 
+                          value={settingsForm.contactPerson3.email} 
+                          onChange={(e) => setSettingsForm({...settingsForm, contactPerson3: {...settingsForm.contactPerson3, email: e.target.value}})}
+                          placeholder="Email"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Image URL</label>
+                        <div className="flex gap-2">
+                          <input 
+                            type="text" 
+                            value={settingsForm.contactPerson3.imageUrl} 
+                            onChange={(e) => setSettingsForm({...settingsForm, contactPerson3: {...settingsForm.contactPerson3, imageUrl: e.target.value}})}
+                            placeholder="https://..."
+                            className="flex-grow px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                          />
+                          <label className="cursor-pointer bg-white border border-gray-300 px-3 py-2 rounded-lg text-xs font-bold hover:bg-gray-50 flex items-center">
+                            Upload
+                            <input 
+                              type="file" 
+                              className="hidden" 
+                              accept="image/*"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  const reader = new FileReader();
+                                  reader.onloadend = () => {
+                                    setSettingsForm({...settingsForm, contactPerson3: {...settingsForm.contactPerson3, imageUrl: reader.result as string}});
+                                  };
+                                  reader.readAsDataURL(file);
+                                }
+                              }}
+                            />
+                          </label>
+                        </div>
+                        {settingsForm.contactPerson3.imageUrl && (
+                          <div className="mt-2 w-12 h-12 rounded-full overflow-hidden border border-gray-200">
+                            <img src={settingsForm.contactPerson3.imageUrl} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                           </div>
                         )}
                       </div>

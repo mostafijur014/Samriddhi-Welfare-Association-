@@ -847,13 +847,15 @@ export const PublicView = () => {
       </AnimatePresence>
 
       {/* Contact Persons Section */}
-      {settings.showContactPersons !== false && (settings.contactPerson1?.name || settings.contactPerson2?.name) && (
+      {settings.showContactPersons !== false && (settings.contactPerson1?.name || settings.contactPerson2?.name || settings.contactPerson3?.name) && (
         <div className="mt-16 mb-12">
           <div className="text-center mb-10">
             <h2 className="text-2xl font-bold text-gray-900">Contact Persons</h2>
             <p className="text-gray-500 mt-2 text-sm uppercase tracking-widest font-bold">Get in touch with our team</p>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+          <div className={`grid grid-cols-1 ${
+            (settings.contactPerson1?.name && settings.contactPerson2?.name && settings.contactPerson3?.name) ? 'lg:grid-cols-3' : 'md:grid-cols-2'
+          } gap-8 max-w-6xl mx-auto`}>
             {/* Person 1 */}
             {settings.contactPerson1?.name && (
               <motion.div 
@@ -910,6 +912,37 @@ export const PublicView = () => {
                     </a>
                     <a href={`mailto:${settings.contactPerson2.email}`} className="flex items-center text-sm text-gray-600 hover:text-indigo-600 transition-colors">
                       <Mail className="w-3.5 h-3.5 mr-2" /> {settings.contactPerson2.email}
+                    </a>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Person 3 */}
+            {settings.contactPerson3?.name && (
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                className="bg-white p-6 rounded-3xl shadow-xl border border-gray-100 flex items-center gap-6"
+              >
+                <div className="w-24 h-24 rounded-2xl overflow-hidden shadow-md ring-4 ring-indigo-50 flex-shrink-0">
+                  <img 
+                    src={settings.contactPerson3.imageUrl || 'https://picsum.photos/seed/person3/200/200'} 
+                    alt={settings.contactPerson3.name} 
+                    className="w-full h-full object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-gray-900 leading-tight">{settings.contactPerson3.name}</h3>
+                  <p className="text-xs font-bold text-indigo-600 uppercase tracking-wider mb-3">{settings.contactPerson3.role}</p>
+                  <div className="space-y-1">
+                    <a href={`tel:${settings.contactPerson3.phone}`} className="flex items-center text-sm text-gray-600 hover:text-indigo-600 transition-colors">
+                      <Phone className="w-3.5 h-3.5 mr-2" /> {settings.contactPerson3.phone}
+                    </a>
+                    <a href={`mailto:${settings.contactPerson3.email}`} className="flex items-center text-sm text-gray-600 hover:text-indigo-600 transition-colors">
+                      <Mail className="w-3.5 h-3.5 mr-2" /> {settings.contactPerson3.email}
                     </a>
                   </div>
                 </div>
