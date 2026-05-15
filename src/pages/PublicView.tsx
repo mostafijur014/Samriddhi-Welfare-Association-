@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useData, Member } from '../hooks/useData';
-import { calculateInterest, formatCurrency, getMonthsInRange } from '../utils/calculations';
+import { formatCurrency, getMonthsInRange } from '../utils/calculations';
 import { 
   getExpectedMonthlyAmount, 
   getTotalExpectedMonthly, 
@@ -8,12 +8,12 @@ import {
   getYearlyTargetWithCarryover,
   getYearlyPaidInCycle
 } from '../utils/financials';
-import { Users, TrendingUp, PiggyBank, Wallet, Search, Filter, AlertTriangle, Calendar, X, Clock, Phone, Mail } from 'lucide-react';
+import { Users, TrendingUp, PiggyBank, Wallet, Search, Filter, AlertTriangle, Calendar, X, Clock, Phone, Mail, BarChart3, Receipt } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList } from 'recharts';
 
 export const PublicView = () => {
-  const { members, transactions, settings, loading, error } = useData();
+  const { members, transactions, profits, expenses, settings, loading, error } = useData();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedMemberForDetails, setSelectedMemberForDetails] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -128,17 +128,9 @@ export const PublicView = () => {
 
   const totalDeposited = members.reduce((sum, m) => sum + m.totalDeposited, 0);
   const totalYearlyPaid = members.reduce((sum, m) => sum + (m.totalYearlyPaid || 0), 0);
-  
-  // Calculate total interest by summing individual member interests
-  const memberCalculations = members.map(m => calculateInterest(
-    m.totalDeposited,
-    m.totalYearlyPaid || 0,
-    settings.interestRate,
-    settings.duration
-  ));
-  
-  const totalInterest = memberCalculations.reduce((sum, c) => sum + c.interestEarned, 0);
-  const totalFinal = totalDeposited + totalYearlyPaid + totalInterest;
+  const totalProfitsAmount = profits.reduce((sum, p) => sum + p.amount, 0);
+  const totalExpensesAmount = (expenses || []).filter(e => e.deductFromBalance).reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  const totalFinal = totalDeposited + totalYearlyPaid + totalProfitsAmount - totalExpensesAmount;
 
   const filteredMembers = members.filter(m => 
     m.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -149,7 +141,8 @@ export const PublicView = () => {
     { label: 'Total Members', value: members.length, icon: Users, color: 'bg-blue-500' },
     { label: 'Total Deposited', value: formatCurrency(totalDeposited), icon: PiggyBank, color: 'bg-green-500' },
     { label: 'Yearly Collection', value: formatCurrency(totalYearlyPaid), icon: Wallet, color: 'bg-amber-500' },
-    { label: 'Final Balance', value: formatCurrency(totalFinal), icon: TrendingUp, color: 'bg-indigo-600' },
+    { label: 'Total Profit', value: formatCurrency(totalProfitsAmount), icon: TrendingUp, color: 'bg-indigo-500' },
+    { label: 'Final Balance', value: formatCurrency(totalFinal), icon: BarChart3, color: 'bg-indigo-600' },
   ];
 
   // Logic for the 3 columns
@@ -536,7 +529,6 @@ export const PublicView = () => {
           </div>
         </div>
       </div>
-
       {/* Search and Filter */}
       <div className="mb-6 flex flex-col lg:flex-row items-center justify-between gap-4">
         <div className="flex flex-col sm:flex-row items-center gap-4 w-full lg:w-auto">
@@ -598,12 +590,7 @@ export const PublicView = () => {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {filteredMembers.map((member) => {
-                const { finalBalance } = calculateInterest(
-                  member.totalDeposited,
-                  member.totalYearlyPaid || 0,
-                  settings.interestRate,
-                  settings.duration
-                );
+                const totalPaidForMember = member.totalDeposited + (member.totalYearlyPaid || 0);
                 
                 const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === viewMonth);
                 const totalForViewMonth = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
@@ -662,7 +649,7 @@ export const PublicView = () => {
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-indigo-600 font-bold">
-                      {formatCurrency(finalBalance)}
+                      {formatCurrency(totalPaidForMember)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex flex-col">
@@ -739,12 +726,7 @@ export const PublicView = () => {
                   const member = members.find(m => m.id === selectedMemberForDetails);
                   if (!member) return null;
                   
-                  const { finalBalance } = calculateInterest(
-                    member.totalDeposited,
-                    member.totalYearlyPaid || 0,
-                    settings.interestRate,
-                    settings.duration
-                  );
+                  const totalPaidForMember = member.totalDeposited + (member.totalYearlyPaid || 0);
 
                   const cycleStart = getYearlyCycleStart(currentMonth, settings.startDate);
                   const yearlyTarget = getYearlyTargetWithCarryover(member, transactions, settings, cycleStart);
@@ -753,8 +735,8 @@ export const PublicView = () => {
                   return (
                     <div className="mb-6 grid grid-cols-2 gap-3">
                       <div className="bg-indigo-50 p-3 rounded-xl border border-indigo-100">
-                        <p className="text-[10px] text-indigo-600 font-bold uppercase">Final Balance</p>
-                        <p className="text-lg font-black text-indigo-900">{formatCurrency(finalBalance)}</p>
+                        <p className="text-[10px] text-indigo-600 font-bold uppercase">Total Account Balance</p>
+                        <p className="text-lg font-black text-indigo-900">{formatCurrency(totalPaidForMember)}</p>
                       </div>
                       <div className="bg-amber-50 p-3 rounded-xl border border-amber-100">
                         <p className="text-[10px] text-amber-600 font-bold uppercase">Yearly Progress</p>
@@ -845,6 +827,115 @@ export const PublicView = () => {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Group Profits Section */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 mb-10 mt-10 overflow-hidden">
+        <div className="p-6 border-b border-gray-50 flex items-center justify-between bg-emerald-600 text-white">
+          <div className="flex items-center">
+            <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center mr-4">
+              <TrendingUp className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold">Group Profits</h3>
+              <p className="text-emerald-100 text-[10px] uppercase font-bold tracking-widest">Collective earnings grow our fund</p>
+            </div>
+          </div>
+          <div className="text-right">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-100">Total Profit</p>
+            <p className="text-2xl font-black">{formatCurrency(totalProfitsAmount)}</p>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="bg-gray-50">
+                <th className="px-6 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest">Date</th>
+                <th className="px-6 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest">Description</th>
+                <th className="px-6 py-3 text-right text-[10px] font-bold text-gray-400 uppercase tracking-widest">Amount</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {profits.length > 0 ? (
+                profits.map((profit) => (
+                  <tr key={profit.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                      {new Date(profit.date).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-900 font-medium">
+                      {profit.description}
+                    </td>
+                    <td className="px-6 py-4 text-right whitespace-nowrap text-sm font-bold text-green-600">
+                      {formatCurrency(profit.amount)}
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={3} className="px-6 py-12 text-center text-gray-400 italic text-sm">
+                    No profits recorded yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Group Expenses Section */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 mb-20 overflow-hidden">
+        <div className="p-6 border-b border-gray-50 flex items-center justify-between bg-red-600 text-white">
+          <div className="flex items-center">
+            <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center mr-4">
+              <Receipt className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold">Group Expenses</h3>
+              <p className="text-red-100 text-[10px] uppercase font-bold tracking-widest">Tracking our collective spending</p>
+            </div>
+          </div>
+          <div className="text-right">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-red-100">Total Expenses</p>
+            <p className="text-2xl font-black">{formatCurrency(totalExpensesAmount)}</p>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="bg-gray-50">
+                <th className="px-6 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest">Date</th>
+                <th className="px-6 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest">Description</th>
+                <th className="px-6 py-3 text-right text-[10px] font-bold text-gray-400 uppercase tracking-widest">Amount</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {expenses && expenses.length > 0 ? (
+                expenses.map((expense) => (
+                  <tr key={expense.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                      {new Date(expense.date).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-900 font-medium">
+                      {expense.description}
+                      {!expense.deductFromBalance && (
+                        <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-bold bg-gray-100 text-gray-500 uppercase">Personal</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 text-right whitespace-nowrap text-sm font-bold text-red-600">
+                      -{formatCurrency(expense.amount)}
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={3} className="px-6 py-12 text-center text-gray-400 italic text-sm">
+                    No expenses recorded yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       {/* Contact Persons Section */}
       {settings.showContactPersons !== false && (settings.contactPerson1?.name || settings.contactPerson2?.name || settings.contactPerson3?.name) && (

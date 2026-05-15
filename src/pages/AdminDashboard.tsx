@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useData, Member, Transaction, Settings } from '../hooks/useData';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, addDoc, updateDoc, deleteDoc, doc, setDoc, serverTimestamp, getDocs, query, limit } from 'firebase/firestore';
-import { calculateInterest, formatCurrency, getMonthsInRange } from '../utils/calculations';
+import { formatCurrency, getMonthsInRange } from '../utils/calculations';
 import { 
   getExpectedMonthlyAmount, 
   getTotalExpectedMonthly, 
@@ -14,7 +14,8 @@ import {
   Plus, Edit2, Trash2, Settings as SettingsIcon, 
   CheckCircle, XCircle, AlertCircle, Download, Save, X,
   Calendar, Clock, Phone, ChevronDown, ChevronUp,
-  AlertTriangle, PiggyBank, Users, TrendingUp, Wallet, GripVertical
+  AlertTriangle, PiggyBank, Users, TrendingUp, Wallet, GripVertical,
+  Receipt, MinusCircle, ExternalLink
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList } from 'recharts';
@@ -66,12 +67,7 @@ const SortableMemberRow: React.FC<{
   const yearlyTarget = getYearlyTargetWithCarryover(member, transactions, settings, currentYearCycleStart);
   const yearlyPaid = getYearlyPaidInCycle(member, transactions, currentYearCycleStart);
   
-  const { finalBalance } = calculateInterest(
-    member.totalDeposited,
-    member.totalYearlyPaid || 0,
-    settings.interestRate,
-    settings.duration
-  );
+  const totalPaid = member.totalDeposited + (member.totalYearlyPaid || 0);
 
   const expectedMonthsTotal = getTotalExpectedMonthly(member, settings, currentMonth);
   const isBehind = member.totalDeposited < expectedMonthsTotal;
@@ -130,7 +126,7 @@ const SortableMemberRow: React.FC<{
         </div>
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-indigo-600">
-        {formatCurrency(finalBalance)}
+        {formatCurrency(totalPaid)}
       </td>
       <td className="px-6 py-4 whitespace-nowrap">
         <div className="flex flex-col">
@@ -183,16 +179,24 @@ const SortableMemberRow: React.FC<{
 };
 
 export const AdminDashboard = () => {
-  const { members, transactions, settings, loading, error } = useData();
+  const { members, transactions, profits, expenses, settings, loading, error } = useData();
 
   const [isMemberModalOpen, setIsMemberModalOpen] = useState(false);
   const [isDepositModalOpen, setIsDepositModalOpen] = useState(false);
+  const [isProfitModalOpen, setIsProfitModalOpen] = useState(false);
+  const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
+  const [isConfirmDeleteProfitOpen, setIsConfirmDeleteProfitOpen] = useState(false);
+  const [isConfirmDeleteExpenseOpen, setIsConfirmDeleteExpenseOpen] = useState(false);
   const [memberToDelete, setMemberToDelete] = useState<string | null>(null);
+  const [profitToDelete, setProfitToDelete] = useState<string | null>(null);
+  const [expenseToDelete, setExpenseToDelete] = useState<string | null>(null);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [historyMember, setHistoryMember] = useState<Member | null>(null);
   const [statusMessage, setStatusMessage] = useState<{type: 'success' | 'error', text: string} | null>(null);
   const [editingMember, setEditingMember] = useState<Member | null>(null);
+  const [editingProfit, setEditingProfit] = useState<any | null>(null);
+  const [editingExpense, setEditingExpense] = useState<any | null>(null);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [depositView, setDepositView] = useState<'pending' | 'completed'>('pending');
   const [depositAmount, setDepositAmount] = useState('');
@@ -201,6 +205,19 @@ export const AdminDashboard = () => {
   const [depositMonth, setDepositMonth] = useState(new Date().toISOString().slice(0, 7));
   const [depositType, setDepositType] = useState<'monthly' | 'yearly'>('monthly');
   const [currentTime, setCurrentTime] = useState(new Date());
+
+  const [profitForm, setProfitForm] = useState({
+    description: '',
+    amount: '',
+    date: new Date().toISOString().slice(0, 10)
+  });
+
+  const [expenseForm, setExpenseForm] = useState({
+    description: '',
+    amount: '',
+    date: new Date().toISOString().slice(0, 10),
+    deductFromBalance: true
+  });
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -253,7 +270,6 @@ export const AdminDashboard = () => {
 
   // Settings Form State
   const [settingsForm, setSettingsForm] = useState({
-    interestRate: 5,
     duration: 12,
     startDate: new Date().toISOString().slice(0, 7),
     announcement: '',
@@ -286,7 +302,6 @@ export const AdminDashboard = () => {
   useEffect(() => {
     if (settings) {
       setSettingsForm({
-        interestRate: settings.interestRate,
         duration: settings.duration,
         startDate: settings.startDate || new Date().toISOString().slice(0, 7),
         announcement: settings.announcement || '',
@@ -696,11 +711,101 @@ export const AdminDashboard = () => {
     }
   };
 
+  const handleSaveProfit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!profitForm.description || !profitForm.amount || !profitForm.date) {
+      setStatusMessage({ type: 'error', text: 'Please fill in all profit fields' });
+      return;
+    }
+
+    try {
+      const data = {
+        description: profitForm.description,
+        amount: Number(profitForm.amount),
+        date: new Date(profitForm.date).toISOString()
+      };
+
+      if (editingProfit) {
+        await updateDoc(doc(db, 'profits', editingProfit.id), data);
+        setStatusMessage({ type: 'success', text: 'Profit updated successfully' });
+      } else {
+        await addDoc(collection(db, 'profits'), data);
+        setStatusMessage({ type: 'success', text: 'Profit added successfully' });
+      }
+
+      setIsProfitModalOpen(false);
+      setEditingProfit(null);
+      setProfitForm({ description: '', amount: '', date: new Date().toISOString().slice(0, 10) });
+    } catch (err) {
+      setStatusMessage({ type: 'error', text: 'Failed to save profit record. Please check your connection or permissions.' });
+      handleFirestoreError(err, OperationType.WRITE, 'profits');
+    }
+  };
+
+  const handleDeleteProfit = async () => {
+    if (!profitToDelete) return;
+    try {
+      await deleteDoc(doc(db, 'profits', profitToDelete));
+      setStatusMessage({ type: 'success', text: 'Profit deleted successfully' });
+      setIsConfirmDeleteProfitOpen(false);
+      setProfitToDelete(null);
+    } catch (err) {
+      setStatusMessage({ type: 'error', text: 'Failed to delete profit record. Please check your connection or permissions.' });
+      handleFirestoreError(err, OperationType.DELETE, `profits/${profitToDelete}`);
+    }
+  };
+
+  // Expense Handlers
+  const handleSaveExpense = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const data = {
+        description: expenseForm.description,
+        amount: Number(expenseForm.amount),
+        date: expenseForm.date,
+        deductFromBalance: expenseForm.deductFromBalance,
+        updatedAt: serverTimestamp()
+      };
+
+      if (editingExpense) {
+        await updateDoc(doc(db, 'expenses', editingExpense.id), data);
+        setStatusMessage({ type: 'success', text: 'Expense updated successfully' });
+      } else {
+        await addDoc(collection(db, 'expenses'), {
+          ...data,
+          createdAt: serverTimestamp()
+        });
+        setStatusMessage({ type: 'success', text: 'Expense added successfully' });
+      }
+      setIsExpenseModalOpen(false);
+      setEditingExpense(null);
+      setExpenseForm({
+        description: '',
+        amount: '',
+        date: new Date().toISOString().slice(0, 10),
+        deductFromBalance: true
+      });
+    } catch (err) {
+      handleFirestoreError(err, editingExpense ? OperationType.UPDATE : OperationType.CREATE, 'expenses');
+    }
+  };
+
+  const handleDeleteExpense = async () => {
+    if (!expenseToDelete) return;
+    try {
+      await deleteDoc(doc(db, 'expenses', expenseToDelete));
+      setStatusMessage({ type: 'success', text: 'Expense deleted successfully' });
+      setIsConfirmDeleteExpenseOpen(false);
+      setExpenseToDelete(null);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `expenses/${expenseToDelete}`);
+    }
+  };
+
   const handleUpdateSettings = async () => {
     try {
       const settingsColl = collection(db, 'settings');
       const data = {
-        interestRate: Number(settingsForm.interestRate),
         duration: Number(settingsForm.duration),
         announcement: settingsForm.announcement,
         showAnnouncement: settingsForm.showAnnouncement,
@@ -771,14 +876,10 @@ export const AdminDashboard = () => {
   });
 
   const totalDeposited = members.reduce((sum, m) => sum + m.totalDeposited, 0);
-  
-  // Calculate total interest by summing individual member interests
-  const memberCalculations = members.map(m => calculateInterest(
-    m.totalDeposited,
-    m.totalYearlyPaid || 0,
-    settings.interestRate,
-    settings.duration
-  ));
+  const totalYearly = members.reduce((sum, m) => sum + (m.totalYearlyPaid || 0), 0);
+  const totalProfitsAmount = profits.reduce((sum, p) => sum + p.amount, 0);
+  const totalExpensesAmount = (expenses || []).filter(e => e.deductFromBalance).reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  const finalBalanceCalculated = totalDeposited + totalYearly + totalProfitsAmount - totalExpensesAmount;
 
   const CustomLabel = (props: any) => {
     const { x, y, width, value, label } = props;
@@ -823,44 +924,67 @@ export const AdminDashboard = () => {
               </div>
             </div>
           </div>
-          <div className="flex flex-wrap gap-3">
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 w-full sm:w-auto">
             <button 
               onClick={() => { setEditingMember(null); setMemberForm({ name: '', memberId: '', phone: '', monthlyContribution: '', yearlyFixedDeposit: '', status: 'Active' }); setIsMemberModalOpen(true); }}
-              className="inline-flex items-center px-4 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all shadow-sm"
+              className="inline-flex items-center justify-center px-4 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all shadow-sm text-sm"
             >
               <Plus className="w-4 h-4 mr-2" /> Add Member
             </button>
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={() => { 
-                  setDepositView('pending'); 
-                  setSelectedMemberIds([]);
-                  setDepositAmount('');
-                  setMonthlyDepositAmount('');
-                  setYearlyDepositAmount('');
-                  setIsDepositModalOpen(true); 
-                }}
-                className="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 transition-all shadow-sm"
-              >
-                <span className="w-4 h-4 mr-2 flex items-center justify-center font-bold">৳</span> New Deposit
-              </button>
-              <button 
-                onClick={() => { 
-                  setDepositView('completed'); 
-                  setSelectedMemberIds([]);
-                  setDepositAmount('');
-                  setMonthlyDepositAmount('');
-                  setYearlyDepositAmount('');
-                  setIsDepositModalOpen(true); 
-                }}
-                className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-all shadow-sm"
-              >
-                <CheckCircle className="w-4 h-4 mr-2" /> Done Deposit
-              </button>
-            </div>
+            <button 
+              onClick={() => { 
+                setDepositView('pending'); 
+                setSelectedMemberIds([]);
+                setDepositAmount('');
+                setMonthlyDepositAmount('');
+                setYearlyDepositAmount('');
+                setIsDepositModalOpen(true); 
+              }}
+              className="inline-flex items-center justify-center px-4 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 transition-all shadow-sm text-sm"
+            >
+              <span className="w-4 h-4 mr-2 flex items-center justify-center font-bold">৳</span> New Deposit
+            </button>
+            <button 
+              onClick={() => { 
+                setDepositView('completed'); 
+                setSelectedMemberIds([]);
+                setDepositAmount('');
+                setMonthlyDepositAmount('');
+                setYearlyDepositAmount('');
+                setIsDepositModalOpen(true); 
+              }}
+              className="inline-flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-all shadow-sm text-sm"
+            >
+              <CheckCircle className="w-4 h-4 mr-2" /> Done Deposit
+            </button>
+            <button 
+              onClick={() => {
+                setEditingProfit(null);
+                setProfitForm({ description: '', amount: '', date: new Date().toISOString().slice(0, 10) });
+                setIsProfitModalOpen(true);
+              }}
+              className="inline-flex items-center justify-center px-4 py-2 bg-indigo-500 text-white rounded-xl hover:bg-indigo-600 transition-all shadow-sm text-sm"
+            >
+              <TrendingUp className="w-4 h-4 mr-2" /> New Profit
+            </button>
+            <button 
+              onClick={() => {
+                setEditingExpense(null);
+                setExpenseForm({
+                  description: '',
+                  amount: '',
+                  date: new Date().toISOString().split('T')[0],
+                  deductFromBalance: true
+                });
+                setIsExpenseModalOpen(true);
+              }}
+              className="inline-flex items-center justify-center px-4 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-all shadow-sm text-sm"
+            >
+              <Receipt className="w-4 h-4 mr-2" /> New Expense
+            </button>
             <button 
               onClick={exportToCSV}
-              className="inline-flex items-center px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-all"
+              className="inline-flex items-center justify-center px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-all shadow-sm text-sm"
             >
               <Download className="w-4 h-4 mr-2" /> Export
             </button>
@@ -870,14 +994,14 @@ export const AdminDashboard = () => {
 
       {/* Settings Section */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 mb-8 overflow-hidden">
-        {/* Global Interest Settings Header */}
+        {/* Global Group Settings Header */}
         <div 
           className="p-6 flex items-center justify-between cursor-pointer hover:bg-gray-50 transition-colors"
           onClick={() => toggleSection('interest')}
         >
           <div className="flex items-center">
             <SettingsIcon className="w-5 h-5 text-indigo-500 mr-2" />
-            <h2 className="text-lg font-semibold text-gray-900">Global Interest Settings</h2>
+            <h2 className="text-lg font-semibold text-gray-900">Global Group Settings</h2>
           </div>
           {expandedSections.interest ? <ChevronUp className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
         </div>
@@ -892,15 +1016,6 @@ export const AdminDashboard = () => {
               className="px-6 pb-6"
             >
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 uppercase mb-1">Interest Rate (%)</label>
-                  <input 
-                    type="number" 
-                    value={settingsForm.interestRate} 
-                    onChange={(e) => setSettingsForm({...settingsForm, interestRate: Number(e.target.value)})}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500"
-                  />
-                </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-500 uppercase mb-1">Duration (Months)</label>
                   <input 
@@ -1409,24 +1524,19 @@ export const AdminDashboard = () => {
         <div className="space-y-4">
           <div className="bg-indigo-600 p-6 rounded-2xl text-white shadow-lg shadow-indigo-200">
             <p className="text-indigo-100 text-sm font-medium">Total Final Balance</p>
-            <h4 className="text-3xl font-bold mt-1">{formatCurrency(members.reduce((sum, m) => {
-              const { finalBalance } = calculateInterest(m.totalDeposited, m.totalYearlyPaid || 0, settings.interestRate, settings.duration);
-              return sum + finalBalance;
-            }, 0))}</h4>
+            <h4 className="text-3xl font-bold mt-1">{formatCurrency(finalBalanceCalculated)}</h4>
             <div className="mt-4 pt-4 border-t border-indigo-500 flex justify-between items-center text-sm">
-              <span>Total Interest</span>
-              <span className="font-bold">+{formatCurrency(members.reduce((sum, m) => {
-                const { interestEarned } = calculateInterest(m.totalDeposited, m.totalYearlyPaid || 0, settings.interestRate, settings.duration);
-                return sum + interestEarned;
-              }, 0))}</span>
+              <span>Total Group Profits</span>
+              <span className="font-bold">+{formatCurrency(totalProfitsAmount)}</span>
             </div>
           </div>
-          <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+          <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-center">
             <p className="text-gray-500 text-sm font-medium">Active Members</p>
             <h4 className="text-3xl font-bold mt-1 text-gray-900">{members.filter(m => m.status === 'Active').length} / {members.length}</h4>
           </div>
         </div>
       </div>
+
 
       {/* 3-Column Status Section */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
@@ -1663,8 +1773,9 @@ export const AdminDashboard = () => {
         </div>
       </div>
 
+
       {/* Members Table */}
-      <div className="bg-white shadow-sm border border-gray-200 rounded-2xl overflow-hidden">
+      <div className="bg-white shadow-sm border border-gray-200 rounded-2xl overflow-hidden mb-10">
         <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
           <h3 className="text-lg font-semibold text-gray-900">Member Management</h3>
         </div>
@@ -1907,7 +2018,7 @@ export const AdminDashboard = () => {
                       <p className="text-[10px] text-red-600 mt-1 font-medium">Month is before start date</p>
                     )}
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <div>
                         <label className="block text-[9px] sm:text-[10px] font-bold text-gray-500 uppercase mb-1 truncate">Monthly (৳)</label>
                         <input 
@@ -1995,9 +2106,6 @@ export const AdminDashboard = () => {
                         />
                       </div>
                     </div>
-                  </div>
-
-                <div>
                   <div className="flex items-center justify-between mb-2">
                     <label className="block text-sm font-medium text-gray-700">
                       {depositView === 'pending' ? 'Select Members (Pending)' : 'Members (Completed)'}
@@ -2272,6 +2380,441 @@ export const AdminDashboard = () => {
           </motion.div>
         )}
       </AnimatePresence>
+      {/* Profit Modal */}
+      <AnimatePresence>
+        {isProfitModalOpen && (
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+            onClick={() => { setIsProfitModalOpen(false); setEditingProfit(null); }}
+          >
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="px-6 py-6 bg-indigo-600 text-white flex justify-between items-center">
+                <div>
+                  <h3 className="text-xl font-bold">{editingProfit ? 'Edit Group Profit' : 'Add Group Profit'}</h3>
+                  <p className="text-indigo-100 text-sm">This will be added to the total group balance.</p>
+                </div>
+                <button onClick={() => { setIsProfitModalOpen(false); setEditingProfit(null); }} className="text-indigo-200 hover:text-white transition-colors">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              
+              <form onSubmit={handleSaveProfit} className="p-6 space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Profit Description</label>
+                  <input 
+                    type="text" 
+                    required
+                    value={profitForm.description}
+                    onChange={(e) => setProfitForm({...profitForm, description: e.target.value})}
+                    placeholder="e.g. Business investment return, Sales profit"
+                    className="w-full px-4 py-3 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Amount (৳)</label>
+                    <input 
+                      type="number" 
+                      required
+                      step="0.01"
+                      value={profitForm.amount}
+                      onChange={(e) => setProfitForm({...profitForm, amount: e.target.value})}
+                      placeholder="0.00"
+                      className="w-full px-4 py-3 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Date</label>
+                    <input 
+                      type="date" 
+                      required
+                      value={profitForm.date}
+                      onChange={(e) => setProfitForm({...profitForm, date: e.target.value})}
+                      className="w-full px-4 py-3 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none"
+                    />
+                  </div>
+                </div>
+                
+                <div className="flex gap-3 pt-4">
+                  <button 
+                    type="button"
+                    onClick={() => { setIsProfitModalOpen(false); setEditingProfit(null); }}
+                    className="flex-1 px-4 py-3 border border-gray-200 text-gray-600 font-bold rounded-2xl hover:bg-gray-50 transition-all uppercase tracking-wider"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit"
+                    className="flex-1 px-4 py-3 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 uppercase tracking-wider"
+                  >
+                    {editingProfit ? 'Update Profit' : 'Add Profit'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Confirmation Modal for Profit Delete */}
+      <AnimatePresence>
+        {isConfirmDeleteProfitOpen && (
+          <div 
+            className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+            onClick={() => setIsConfirmDeleteProfitOpen(false)}
+          >
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                <AlertCircle className="w-8 h-8" />
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">Delete Profit Record?</h3>
+              <p className="text-gray-500 mb-8">This action cannot be undone and will affect total balance.</p>
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setIsConfirmDeleteProfitOpen(false)}
+                  className="flex-1 px-4 py-3 bg-gray-100 text-gray-700 font-bold rounded-2xl hover:bg-gray-200 transition-colors uppercase tracking-wider text-sm"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleDeleteProfit}
+                  className="flex-1 px-4 py-3 bg-red-600 text-white font-bold rounded-2xl hover:bg-red-700 transition-colors uppercase tracking-wider text-sm shadow-lg shadow-red-100"
+                >
+                  Delete
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Expense Modal */}
+      <AnimatePresence>
+        {isExpenseModalOpen && (
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+            onClick={() => { setIsExpenseModalOpen(false); setEditingExpense(null); }}
+          >
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="px-6 py-6 bg-red-600 text-white flex justify-between items-center">
+                <div>
+                  <h3 className="text-xl font-bold">{editingExpense ? 'Edit Expense' : 'Add Expense'}</h3>
+                  <p className="text-red-100 text-sm">Track group spending and overheads.</p>
+                </div>
+                <button onClick={() => { setIsExpenseModalOpen(false); setEditingExpense(null); }} className="text-red-200 hover:text-white transition-colors">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              
+              <form onSubmit={handleSaveExpense} className="p-6 space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Expense Description</label>
+                  <input 
+                    type="text" 
+                    required
+                    value={expenseForm.description}
+                    onChange={(e) => setExpenseForm({...expenseForm, description: e.target.value})}
+                    placeholder="e.g. Office rent, Stationery, Bank fees"
+                    className="w-full px-4 py-3 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-red-500 focus:border-red-500 transition-all outline-none"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Amount (৳)</label>
+                    <input 
+                      type="number" 
+                      required
+                      step="0.01"
+                      value={expenseForm.amount}
+                      onChange={(e) => setExpenseForm({...expenseForm, amount: e.target.value})}
+                      placeholder="0.00"
+                      className="w-full px-4 py-3 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-red-500 focus:border-red-500 transition-all outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Date</label>
+                    <input 
+                      type="date" 
+                      required
+                      value={expenseForm.date}
+                      onChange={(e) => setExpenseForm({...expenseForm, date: e.target.value})}
+                      className="w-full px-4 py-3 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-red-500 focus:border-red-500 transition-all outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-2xl group cursor-pointer" onClick={() => setExpenseForm({...expenseForm, deductFromBalance: !expenseForm.deductFromBalance})}>
+                  <div className={`p-2 rounded-xl transition-colors ${expenseForm.deductFromBalance ? 'bg-red-100 text-red-600' : 'bg-gray-200 text-gray-400'}`}>
+                    <MinusCircle className="w-5 h-5" />
+                  </div>
+                  <div className="flex-grow">
+                    <p className="text-sm font-bold text-gray-700">Deduct from Balance</p>
+                    <p className="text-[10px] text-gray-400 font-medium">Subtract this amount from final group balance</p>
+                  </div>
+                  <div className={`w-12 h-6 rounded-full p-1 transition-colors relative ${expenseForm.deductFromBalance ? 'bg-red-600' : 'bg-gray-300'}`}>
+                    <div className={`w-4 h-4 bg-white rounded-full transition-transform shadow-sm ${expenseForm.deductFromBalance ? 'translate-x-6' : 'translate-x-0'}`} />
+                  </div>
+                </div>
+                
+                <div className="flex gap-3 pt-4">
+                  <button 
+                    type="button"
+                    onClick={() => { setIsExpenseModalOpen(false); setEditingExpense(null); }}
+                    className="flex-1 px-4 py-3 border border-gray-200 text-gray-600 font-bold rounded-2xl hover:bg-gray-50 transition-all uppercase tracking-wider"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit"
+                    className="flex-1 px-4 py-3 bg-red-600 text-white font-bold rounded-2xl hover:bg-red-700 transition-all shadow-lg shadow-red-100 uppercase tracking-wider"
+                  >
+                    {editingExpense ? 'Update Expense' : 'Add Expense'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Confirmation Modal for Expense Delete */}
+      <AnimatePresence>
+        {isConfirmDeleteExpenseOpen && (
+          <div 
+            className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+            onClick={() => setIsConfirmDeleteExpenseOpen(false)}
+          >
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                <AlertCircle className="w-8 h-8" />
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">Delete Expense Record?</h3>
+              <p className="text-gray-500 mb-8">This action cannot be undone and will affect total balance if deduction is enabled.</p>
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setIsConfirmDeleteExpenseOpen(false)}
+                  className="flex-1 px-4 py-3 bg-gray-100 text-gray-700 font-bold rounded-2xl hover:bg-gray-200 transition-colors uppercase tracking-wider text-sm"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleDeleteExpense}
+                  className="flex-1 px-4 py-3 bg-red-600 text-white font-bold rounded-2xl hover:bg-red-700 transition-colors uppercase tracking-wider text-sm shadow-lg shadow-red-100"
+                >
+                  Delete
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Profits History Section */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 mb-10 overflow-hidden">
+        <div className="p-6 border-b border-gray-50 flex items-center justify-between bg-gray-50/50">
+          <div className="flex items-center">
+            <TrendingUp className="w-5 h-5 text-indigo-500 mr-2" />
+            <h3 className="text-lg font-semibold text-gray-900">Profits History</h3>
+          </div>
+          <div className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">
+            Total Profit: {formatCurrency(totalProfitsAmount)}
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="bg-gray-50">
+                <th className="px-6 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest">Date</th>
+                <th className="px-6 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest">Description</th>
+                <th className="px-6 py-3 text-right text-[10px] font-bold text-gray-400 uppercase tracking-widest">Amount</th>
+                <th className="px-6 py-3 text-right text-[10px] font-bold text-gray-400 uppercase tracking-widest">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {profits.length > 0 ? (
+                profits.map((profit) => (
+                  <tr key={profit.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                      {new Date(profit.date).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-900 font-medium">
+                      {profit.description}
+                    </td>
+                    <td className="px-6 py-4 text-right whitespace-nowrap text-sm font-bold text-green-600">
+                      {formatCurrency(profit.amount)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                      <div className="flex justify-end gap-2">
+                        <button 
+                          onClick={() => {
+                            setEditingProfit(profit);
+                            setProfitForm({
+                              description: profit.description,
+                              amount: profit.amount.toString(),
+                              date: new Date(profit.date).toISOString().slice(0, 10)
+                            });
+                            setIsProfitModalOpen(true);
+                          }}
+                          className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button 
+                          onClick={() => {
+                            setProfitToDelete(profit.id);
+                            setIsConfirmDeleteProfitOpen(true);
+                          }}
+                          className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={4} className="px-6 py-12 text-center text-gray-400 italic text-sm">
+                    No profits recorded yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Group Expenses Section */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 mb-10 overflow-hidden">
+        <div className="p-6 border-b border-gray-50 flex items-center justify-between bg-red-600 text-white">
+          <div className="flex items-center">
+            <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center mr-4">
+              <Receipt className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold">Group Expenses</h3>
+              <p className="text-red-100 text-[10px] uppercase font-bold tracking-widest">Track and manage group spending</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="text-right mr-4">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-red-100">Total Expenses</p>
+              <p className="text-2xl font-black">{formatCurrency(totalExpensesAmount)}</p>
+            </div>
+            <button 
+              onClick={() => {
+                setEditingExpense(null);
+                setExpenseForm({
+                  description: '',
+                  amount: '',
+                  date: new Date().toISOString().split('T')[0],
+                  deductFromBalance: true
+                });
+                setIsExpenseModalOpen(true);
+              }}
+              className="bg-white text-red-600 p-2 rounded-xl hover:bg-red-50 transition-colors shadow-lg"
+            >
+              <Plus className="w-6 h-6" />
+            </button>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="bg-gray-50">
+                <th className="px-6 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest">Date</th>
+                <th className="px-6 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest">Description</th>
+                <th className="px-6 py-3 text-center text-[10px] font-bold text-gray-400 uppercase tracking-widest">Deduct</th>
+                <th className="px-6 py-3 text-right text-[10px] font-bold text-gray-400 uppercase tracking-widest">Amount</th>
+                <th className="px-6 py-3 text-right text-[10px] font-bold text-gray-400 uppercase tracking-widest">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {expenses && expenses.length > 0 ? (
+                expenses.map((expense) => (
+                  <tr key={expense.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                      {new Date(expense.date).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-900 font-medium">
+                      {expense.description}
+                    </td>
+                    <td className="px-6 py-4 text-center">
+                      {expense.deductFromBalance ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700 uppercase">Yes</span>
+                      ) : (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-gray-100 text-gray-600 uppercase">No</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 text-right whitespace-nowrap text-sm font-bold text-red-600">
+                      -{formatCurrency(expense.amount)}
+                    </td>
+                    <td className="px-6 py-4 text-right whitespace-nowrap">
+                      <div className="flex justify-end gap-2">
+                        <button 
+                          onClick={() => {
+                            setEditingExpense(expense);
+                            setExpenseForm({
+                              description: expense.description,
+                              amount: String(expense.amount),
+                              date: expense.date,
+                              deductFromBalance: expense.deductFromBalance
+                            });
+                            setIsExpenseModalOpen(true);
+                          }}
+                          className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button 
+                          onClick={() => {
+                            setExpenseToDelete(expense.id);
+                            setEditingExpense(expense);
+                            setIsConfirmDeleteExpenseOpen(true);
+                          }}
+                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={5} className="px-6 py-12 text-center text-gray-400 italic text-sm">
+                    No expenses recorded yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 };

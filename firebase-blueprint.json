@@ -49,6 +49,29 @@
       },
       "required": ["name", "memberId", "monthlyContribution", "totalDeposited", "status"]
     },
+    "Profit": {
+      "title": "Profit",
+      "description": "A group profit record",
+      "type": "object",
+      "properties": {
+        "description": { "type": "string", "description": "Description of the profit" },
+        "amount": { "type": "number", "description": "Profit amount" },
+        "date": { "type": "string", "format": "date-time", "description": "When the profit was recorded" }
+      },
+      "required": ["description", "amount", "date"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "A group expense record",
+      "type": "object",
+      "properties": {
+        "description": { "type": "string", "description": "Description of the expense" },
+        "amount": { "type": "number", "description": "Expense amount" },
+        "date": { "type": "string", "format": "date-time", "description": "When the expense was recorded" },
+        "deductFromBalance": { "type": "boolean", "description": "Whether this expense should be deducted from the main balance" }
+      },
+      "required": ["description", "amount", "date", "deductFromBalance"]
+    },
     "Transaction": {
       "title": "Transaction",
       "description": "A deposit record",
@@ -64,11 +87,10 @@
     },
     "Settings": {
       "title": "Settings",
-      "description": "Global interest and group settings",
+      "description": "Global group settings",
       "type": "object",
       "properties": {
-        "interestRate": { "type": "number", "description": "Annual interest rate in percentage" },
-        "duration": { "type": "number", "description": "Duration in months for DPS calculation" },
+        "duration": { "type": "number", "description": "Duration in months for calculations" },
         "startDate": { "type": "string", "description": "The month the savings group started (e.g., '2023-01')" },
         "announcement": { "type": "string", "description": "Scrolling announcement text" },
         "showAnnouncement": { "type": "boolean", "description": "Whether to show the announcement bar" },
@@ -85,12 +107,14 @@
         "contactPerson3": { "$ref": "ContactPerson" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["interestRate", "duration", "startDate"]
+      "required": ["duration", "startDate"]
     }
   },
   "firestore": {
     "/members": { "schema": "Member", "description": "Collection of group members" },
     "/transactions": { "schema": "Transaction", "description": "History of all deposits" },
-    "/settings": { "schema": "Settings", "description": "Global configuration" }
+    "/settings": { "schema": "Settings", "description": "Global configuration" },
+    "/profits": { "schema": "Profit", "description": "History of group profits" },
+    "/expenses": { "schema": "Expense", "description": "History of group expenses" }
   }
 }

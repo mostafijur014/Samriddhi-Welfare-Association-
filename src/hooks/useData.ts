@@ -33,6 +33,21 @@ export interface Transaction {
   type: 'monthly' | 'yearly';
 }
 
+export interface Profit {
+  id: string;
+  description: string;
+  amount: number;
+  date: string;
+}
+
+export interface Expense {
+  id: string;
+  description: string;
+  amount: number;
+  date: string;
+  deductFromBalance: boolean;
+}
+
 export interface ContactPerson {
   name: string;
   role: string;
@@ -42,7 +57,6 @@ export interface ContactPerson {
 }
 
 export interface Settings {
-  interestRate: number;
   duration: number;
   startDate: string;
   announcement?: string;
@@ -63,8 +77,9 @@ export interface Settings {
 export const useData = () => {
   const [members, setMembers] = useState<Member[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [profits, setProfits] = useState<Profit[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
   const [settings, setSettings] = useState<Settings>({ 
-    interestRate: 5, 
     duration: 12,
     startDate: new Date().toISOString().slice(0, 7), // Default to current month
     announcementSpeed: 40, // Default speed
@@ -81,10 +96,12 @@ export const useData = () => {
   useEffect(() => {
     let membersLoaded = false;
     let transactionsLoaded = false;
+    let profitsLoaded = false;
+    let expensesLoaded = false;
     let settingsLoaded = false;
 
     const checkLoading = () => {
-      if (membersLoaded && transactionsLoaded && settingsLoaded) {
+      if (membersLoaded && transactionsLoaded && profitsLoaded && expensesLoaded && settingsLoaded) {
         setLoading(false);
       }
     };
@@ -111,6 +128,28 @@ export const useData = () => {
       setLoading(false);
     });
 
+    const qProfits = query(collection(db, 'profits'), orderBy('date', 'desc'));
+    const unsubProfits = onSnapshot(qProfits, (snapshot) => {
+      setProfits(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Profit)));
+      profitsLoaded = true;
+      checkLoading();
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'profits');
+      setError(err.message);
+      setLoading(false);
+    });
+
+    const qExpenses = query(collection(db, 'expenses'), orderBy('date', 'desc'));
+    const unsubExpenses = onSnapshot(qExpenses, (snapshot) => {
+      setExpenses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Expense)));
+      expensesLoaded = true;
+      checkLoading();
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'expenses');
+      setError(err.message);
+      setLoading(false);
+    });
+
     const unsubSettings = onSnapshot(collection(db, 'settings'), (snapshot) => {
       if (!snapshot.empty) {
         setSettings(snapshot.docs[0].data() as Settings);
@@ -126,9 +165,11 @@ export const useData = () => {
     return () => {
       unsubMembers();
       unsubTransactions();
+      unsubProfits();
+      unsubExpenses();
       unsubSettings();
     };
   }, []);
 
-  return { members, transactions, settings, loading, error };
+  return { members, transactions, profits, expenses, settings, loading, error };
 };
