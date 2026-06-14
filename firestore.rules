@@ -7,11 +7,13 @@ service cloud.firestore {
     }
     
     function isAdmin() {
-      return isSignedIn() && request.auth.token.email == 'admin@prosperity.local';
+      return isSignedIn() && 
+             request.auth.token.email != null && 
+             request.auth.token.email.lower().endsWith('@prosperity.local');
     }
 
     function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_-]+$');
     }
 
     // Default deny
