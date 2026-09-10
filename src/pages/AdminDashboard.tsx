@@ -272,6 +272,9 @@ export const AdminDashboard = () => {
   const [settingsForm, setSettingsForm] = useState({
     duration: 12,
     startDate: new Date().toISOString().slice(0, 7),
+    monthlyOldAmount: 1000,
+    monthlyNewAmount: 2000,
+    monthlyIncreaseEffectiveMonth: '2026-09',
     announcement: '',
     showAnnouncement: false,
     announcementSpeed: 40,
@@ -304,6 +307,9 @@ export const AdminDashboard = () => {
       setSettingsForm({
         duration: settings.duration,
         startDate: settings.startDate || new Date().toISOString().slice(0, 7),
+        monthlyOldAmount: settings.monthlyOldAmount ?? 1000,
+        monthlyNewAmount: settings.monthlyNewAmount ?? 2000,
+        monthlyIncreaseEffectiveMonth: settings.monthlyIncreaseEffectiveMonth || '2026-09',
         announcement: settings.announcement || '',
         showAnnouncement: settings.showAnnouncement || false,
         announcementSpeed: settings.announcementSpeed || 40,
@@ -807,6 +813,9 @@ export const AdminDashboard = () => {
       const settingsColl = collection(db, 'settings');
       const data = {
         duration: Number(settingsForm.duration),
+        monthlyOldAmount: Number(settingsForm.monthlyOldAmount) || 1000,
+        monthlyNewAmount: Number(settingsForm.monthlyNewAmount) || 2000,
+        monthlyIncreaseEffectiveMonth: settingsForm.monthlyIncreaseEffectiveMonth || '2026-09',
         announcement: settingsForm.announcement,
         showAnnouncement: settingsForm.showAnnouncement,
         announcementSpeed: Number(settingsForm.announcementSpeed),
@@ -848,6 +857,41 @@ export const AdminDashboard = () => {
       setStatusMessage({ type: 'success', text: 'Settings updated successfully' });
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'settings');
+    }
+  };
+
+  const handleApplyDepositIncreaseToAll = async () => {
+    const oldAmt = Number(settingsForm.monthlyOldAmount) || 1000;
+    const newAmt = Number(settingsForm.monthlyNewAmount) || 2000;
+    const effMonth = settingsForm.monthlyIncreaseEffectiveMonth || '2026-09';
+    const groupStart = settings.startDate || '2025-09';
+
+    if (!window.confirm(`This will set all active members' monthly contribution to ৳${newAmt} starting from ${effMonth}, while preserving historical data (৳${oldAmt}/month before ${effMonth}). Continue?`)) {
+      return;
+    }
+
+    try {
+      for (const m of members) {
+        if (m.status !== 'Active') continue;
+        const history = m.monthlyContributionHistory ? [...m.monthlyContributionHistory] : [];
+        if (!history.some(h => h.startMonth <= groupStart)) {
+          history.push({ startMonth: groupStart, amount: oldAmt });
+        }
+        const effIndex = history.findIndex(h => h.startMonth === effMonth);
+        if (effIndex >= 0) {
+          history[effIndex].amount = newAmt;
+        } else {
+          history.push({ startMonth: effMonth, amount: newAmt });
+        }
+        history.sort((a, b) => a.startMonth.localeCompare(b.startMonth));
+        await updateDoc(doc(db, 'members', m.id), {
+          monthlyContribution: newAmt,
+          monthlyContributionHistory: history
+        });
+      }
+      setStatusMessage({ type: 'success', text: `All active members successfully updated to ৳${newAmt} starting from ${effMonth}! Previous data preserved.` });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'members');
     }
   };
 
@@ -1015,14 +1059,14 @@ export const AdminDashboard = () => {
               transition={{ duration: 0.3 }}
               className="px-6 pb-6"
             >
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-gray-500 uppercase mb-1">Duration (Months)</label>
                   <input 
                     type="number" 
                     value={settingsForm.duration} 
                     onChange={(e) => setSettingsForm({...settingsForm, duration: Number(e.target.value)})}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 text-sm"
                   />
                 </div>
                 <div>
@@ -1031,7 +1075,7 @@ export const AdminDashboard = () => {
                     type="month" 
                     value={settingsForm.startDate} 
                     onChange={(e) => setSettingsForm({...settingsForm, startDate: e.target.value})}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 text-sm"
                   />
                 </div>
                 <div>
@@ -1042,7 +1086,7 @@ export const AdminDashboard = () => {
                     max="31"
                     value={settingsForm.dueStartDate} 
                     onChange={(e) => setSettingsForm({...settingsForm, dueStartDate: Number(e.target.value)})}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 text-sm"
                   />
                 </div>
                 <div>
@@ -1053,14 +1097,86 @@ export const AdminDashboard = () => {
                     max="31"
                     value={settingsForm.dueEndDate} 
                     onChange={(e) => setSettingsForm({...settingsForm, dueEndDate: Number(e.target.value)})}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 text-sm"
                   />
                 </div>
               </div>
-              <div className="mt-4 flex justify-end">
+
+              {/* Monthly Contribution Rules */}
+              <div className="pt-6 mt-6 border-t border-gray-100">
+                <div className="flex items-center gap-2 mb-4">
+                  <TrendingUp className="w-4 h-4 text-indigo-600" />
+                  <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider">
+                    Monthly Contribution Rules
+                  </h3>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 uppercase mb-1">
+                      Previous / Last Year (৳)
+                    </label>
+                    <input 
+                      type="number" 
+                      value={settingsForm.monthlyOldAmount} 
+                      onChange={(e) => setSettingsForm({...settingsForm, monthlyOldAmount: Number(e.target.value)})}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-white"
+                      placeholder="1000"
+                    />
+                    <p className="text-xs text-gray-400 mt-1">Historical rate</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 uppercase mb-1">
+                      Running Month Onwards (৳)
+                    </label>
+                    <input 
+                      type="number" 
+                      value={settingsForm.monthlyNewAmount} 
+                      onChange={(e) => setSettingsForm({...settingsForm, monthlyNewAmount: Number(e.target.value)})}
+                      className="w-full px-4 py-2 border border-indigo-200 bg-indigo-50/20 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 text-sm font-semibold text-indigo-700"
+                      placeholder="2000"
+                    />
+                    <p className="text-xs text-indigo-600 font-medium mt-1">Increased rate</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 uppercase mb-1">
+                      Effective Month
+                    </label>
+                    <input 
+                      type="month" 
+                      value={settingsForm.monthlyIncreaseEffectiveMonth} 
+                      onChange={(e) => setSettingsForm({...settingsForm, monthlyIncreaseEffectiveMonth: e.target.value})}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-white text-gray-900"
+                    />
+                    <p className="text-xs text-gray-400 mt-1">Starts this month</p>
+                  </div>
+                </div>
+
+                {/* Protection Callout & Apply Button */}
+                <div className="mt-4 p-4 bg-amber-50/60 border border-amber-200/70 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div className="flex items-start gap-2.5">
+                    <span className="text-base select-none leading-none">💡</span>
+                    <p className="text-xs text-amber-900 leading-relaxed">
+                      <strong className="font-semibold">Protected:</strong> Months before <span className="font-mono font-semibold text-indigo-700">{settingsForm.monthlyIncreaseEffectiveMonth || '2026-09'}</span> remain permanently calculated at <span className="font-semibold text-gray-900">৳{settingsForm.monthlyOldAmount || 1000}</span>. Historical data is strictly preserved.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleApplyDepositIncreaseToAll}
+                    className="inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl text-xs font-semibold shadow-sm transition-all whitespace-nowrap self-start md:self-center shrink-0"
+                  >
+                    <Users className="w-3.5 h-3.5" />
+                    Apply ৳{settingsForm.monthlyNewAmount || 2000} to All Active Members
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-6 flex justify-end">
                 <button 
                   onClick={handleUpdateSettings}
-                  className="inline-flex items-center justify-center px-4 py-2 bg-indigo-50 text-indigo-600 font-semibold rounded-xl hover:bg-indigo-100 transition-all"
+                  className="inline-flex items-center justify-center px-4 py-2 bg-indigo-50 text-indigo-600 font-semibold rounded-xl hover:bg-indigo-100 transition-all text-sm"
                 >
                   <Save className="w-4 h-4 mr-2" /> Save Settings
                 </button>
@@ -1842,107 +1958,109 @@ export const AdminDashboard = () => {
       <AnimatePresence>
         {isMemberModalOpen && (
           <div 
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+            className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/50 backdrop-blur-sm overflow-y-auto"
             onClick={() => setIsMemberModalOpen(false)}
           >
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
+              className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-md max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden my-auto"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
-                <h3 className="text-xl font-bold text-gray-900">{editingMember ? 'Edit Member' : 'Add New Member'}</h3>
-                <button onClick={() => setIsMemberModalOpen(false)} className="text-gray-400 hover:text-gray-600"><X className="w-6 h-6" /></button>
+              <div className="px-4 sm:px-6 py-3.5 sm:py-4 border-b border-gray-100 flex justify-between items-center shrink-0">
+                <h3 className="text-lg sm:text-xl font-bold text-gray-900">{editingMember ? 'Edit Member' : 'Add New Member'}</h3>
+                <button onClick={() => setIsMemberModalOpen(false)} className="text-gray-400 hover:text-gray-600 p-1"><X className="w-5 h-5 sm:w-6 sm:h-6" /></button>
               </div>
-              <form onSubmit={handleSaveMember} className="p-6 space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-                  <input 
-                    required 
-                    type="text" 
-                    value={memberForm.name} 
-                    onChange={(e) => setMemberForm({...memberForm, name: e.target.value})}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500" 
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Unique ID</label>
-                  <input 
-                    required 
-                    type="text" 
-                    value={memberForm.memberId} 
-                    onChange={(e) => setMemberForm({...memberForm, memberId: e.target.value})}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500" 
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
-                  <input 
-                    type="tel" 
-                    value={memberForm.phone} 
-                    onChange={(e) => setMemberForm({...memberForm, phone: e.target.value})}
-                    placeholder="e.g., +8801700000000"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500" 
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
+              <form onSubmit={handleSaveMember} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+                <div className="p-4 sm:p-6 space-y-3 sm:space-y-4 overflow-y-auto flex-1 min-h-0">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Monthly Contribution</label>
+                    <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1">Full Name</label>
                     <input 
                       required 
-                      type="number" 
-                      value={memberForm.monthlyContribution} 
-                      onChange={(e) => setMemberForm({...memberForm, monthlyContribution: e.target.value})}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500" 
+                      type="text" 
+                      value={memberForm.name} 
+                      onChange={(e) => setMemberForm({...memberForm, name: e.target.value})}
+                      className="w-full px-3 sm:px-4 py-2 border border-gray-300 rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500" 
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Yearly Fixed Deposit</label>
+                    <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1">Unique ID</label>
                     <input 
                       required 
-                      type="number" 
-                      value={memberForm.yearlyFixedDeposit} 
-                      onChange={(e) => setMemberForm({...memberForm, yearlyFixedDeposit: e.target.value})}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500" 
+                      type="text" 
+                      value={memberForm.memberId} 
+                      onChange={(e) => setMemberForm({...memberForm, memberId: e.target.value})}
+                      className="w-full px-3 sm:px-4 py-2 border border-gray-300 rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500" 
                     />
                   </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-                  <select 
-                    value={memberForm.status} 
-                    onChange={(e) => setMemberForm({...memberForm, status: e.target.value as 'Active' | 'Inactive'})}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500"
-                  >
-                    <option value="Active">Active</option>
-                    <option value="Inactive">Inactive</option>
-                  </select>
-                </div>
-
-                {editingMember && (
-                  <div className="pt-2 border-t border-gray-100">
-                    <h4 className="text-xs font-bold text-gray-400 uppercase mb-2">Contribution History</h4>
-                    <div className="max-h-32 overflow-y-auto space-y-2 pr-1">
-                      {editingMember.monthlyContributionHistory?.slice().reverse().map((h, i) => (
-                        <div key={i} className="flex justify-between items-center text-xs p-2 bg-gray-50 rounded-lg">
-                          <span className="text-gray-500 font-medium">
-                            {new Date(h.startMonth + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
-                          </span>
-                          <span className="font-bold text-indigo-600">{formatCurrency(h.amount)}</span>
-                        </div>
-                      ))}
-                      {(!editingMember.monthlyContributionHistory || editingMember.monthlyContributionHistory.length === 0) && (
-                        <p className="text-[10px] text-gray-400 italic">No history recorded yet.</p>
-                      )}
+                  <div>
+                    <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1">Phone Number</label>
+                    <input 
+                      type="tel" 
+                      value={memberForm.phone} 
+                      onChange={(e) => setMemberForm({...memberForm, phone: e.target.value})}
+                      placeholder="e.g., +8801700000000"
+                      className="w-full px-3 sm:px-4 py-2 border border-gray-300 rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500" 
+                    />
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                    <div>
+                      <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1">Monthly Contribution</label>
+                      <input 
+                        required 
+                        type="number" 
+                        value={memberForm.monthlyContribution} 
+                        onChange={(e) => setMemberForm({...memberForm, monthlyContribution: e.target.value})}
+                        className="w-full px-3 sm:px-4 py-2 border border-gray-300 rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500" 
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1">Yearly Fixed Deposit</label>
+                      <input 
+                        required 
+                        type="number" 
+                        value={memberForm.yearlyFixedDeposit} 
+                        onChange={(e) => setMemberForm({...memberForm, yearlyFixedDeposit: e.target.value})}
+                        className="w-full px-3 sm:px-4 py-2 border border-gray-300 rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500" 
+                      />
                     </div>
                   </div>
-                )}
+                  <div>
+                    <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1">Status</label>
+                    <select 
+                      value={memberForm.status} 
+                      onChange={(e) => setMemberForm({...memberForm, status: e.target.value as 'Active' | 'Inactive'})}
+                      className="w-full px-3 sm:px-4 py-2 border border-gray-300 rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500"
+                    >
+                      <option value="Active">Active</option>
+                      <option value="Inactive">Inactive</option>
+                    </select>
+                  </div>
 
-                <div className="pt-4 flex gap-3">
-                  <button type="button" onClick={() => setIsMemberModalOpen(false)} className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50">Cancel</button>
-                  <button type="submit" className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 font-semibold">Save Member</button>
+                  {editingMember && (
+                    <div className="pt-2 border-t border-gray-100">
+                      <h4 className="text-xs font-bold text-gray-400 uppercase mb-2">Contribution History</h4>
+                      <div className="max-h-32 overflow-y-auto space-y-2 pr-1">
+                        {editingMember.monthlyContributionHistory?.slice().reverse().map((h, i) => (
+                          <div key={i} className="flex justify-between items-center text-xs p-2 bg-gray-50 rounded-lg">
+                            <span className="text-gray-500 font-medium">
+                              {new Date(h.startMonth + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                            </span>
+                            <span className="font-bold text-indigo-600">{formatCurrency(h.amount)}</span>
+                          </div>
+                        ))}
+                        {(!editingMember.monthlyContributionHistory || editingMember.monthlyContributionHistory.length === 0) && (
+                          <p className="text-[10px] text-gray-400 italic">No history recorded yet.</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-3 sm:p-4 border-t border-gray-100 flex gap-3 bg-gray-50/90 sm:bg-white shrink-0">
+                  <button type="button" onClick={() => setIsMemberModalOpen(false)} className="flex-1 px-4 py-2.5 sm:py-2 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 font-medium text-sm transition-colors">Cancel</button>
+                  <button type="submit" className="flex-1 px-4 py-2.5 sm:py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 font-semibold text-sm shadow-sm shadow-indigo-100 transition-colors">Save Member</button>
                 </div>
               </form>
             </motion.div>
@@ -1954,143 +2072,121 @@ export const AdminDashboard = () => {
       <AnimatePresence>
         {isDepositModalOpen && (
           <div 
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+            className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/50 backdrop-blur-sm overflow-y-auto"
             onClick={() => { setIsDepositModalOpen(false); setSelectedMemberIds([]); }}
           >
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden"
+              className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-lg max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden my-auto"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
-                <h3 className="text-xl font-bold text-gray-900">
+              <div className="px-4 sm:px-6 py-3.5 sm:py-4 border-b border-gray-100 flex justify-between items-center shrink-0">
+                <h3 className="text-lg sm:text-xl font-bold text-gray-900">
                   {depositView === 'pending' ? 'Log New Deposits' : 'View Completed Deposits'}
                 </h3>
-                <button onClick={() => { setIsDepositModalOpen(false); setSelectedMemberIds([]); }} className="text-gray-400 hover:text-gray-600"><X className="w-6 h-6" /></button>
+                <button onClick={() => { setIsDepositModalOpen(false); setSelectedMemberIds([]); }} className="text-gray-400 hover:text-gray-600 p-1 rounded-lg">
+                  <X className="w-5 h-5 sm:w-6 sm:h-6" />
+                </button>
               </div>
-              <form onSubmit={handleDeposit} className="p-6 space-y-4">
-                <div className="flex gap-4 p-1 bg-gray-100 rounded-2xl">
-                  <button
-                    type="button"
-                    onClick={() => setDepositType('monthly')}
-                    className={`flex-1 py-2 text-sm font-bold rounded-xl transition-all ${depositType === 'monthly' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                  >
-                    Monthly Contribution
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDepositType('yearly')}
-                    className={`flex-1 py-2 text-sm font-bold rounded-xl transition-all ${depositType === 'yearly' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                  >
-                    Yearly Fixed Deposit
-                  </button>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Select Month</label>
-                    <input 
-                      type="month" 
-                      value={depositMonth} 
-                      onChange={(e) => {
-                        const newMonth = e.target.value;
-                        setDepositMonth(newMonth);
-                        setSelectedMemberIds([]);
-                        setDepositAmount('');
-                        setMonthlyDepositAmount('');
-                        setYearlyDepositAmount('');
-                        
-                        if (settings.startDate && newMonth < settings.startDate) {
-                          setStatusMessage({ 
-                            type: 'error', 
-                            text: `Warning: Selected month is before the group start date (${settings.startDate})` 
-                          });
-                        } else {
-                          setStatusMessage(null);
-                        }
-                      }}
-                      className={`w-full px-4 py-2 border rounded-xl focus:ring-indigo-500 focus:border-indigo-500 ${
-                        settings.startDate && depositMonth < settings.startDate ? 'border-red-300 bg-red-50' : 'border-gray-300'
-                      }`}
-                    />
-                    {settings.startDate && depositMonth < settings.startDate && (
-                      <p className="text-[10px] text-red-600 mt-1 font-medium">Month is before start date</p>
-                    )}
+              <form onSubmit={handleDeposit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+                <div className="p-4 sm:p-6 space-y-3 sm:space-y-4 overflow-y-auto flex-1 min-h-0">
+                  <div className="flex gap-2 sm:gap-4 p-1 bg-gray-100 rounded-xl sm:rounded-2xl shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setDepositType('monthly')}
+                      className={`flex-1 py-1.5 sm:py-2 text-xs sm:text-sm font-bold rounded-lg sm:rounded-xl transition-all ${depositType === 'monthly' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                    >
+                      Monthly Contribution
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDepositType('yearly')}
+                      className={`flex-1 py-1.5 sm:py-2 text-xs sm:text-sm font-bold rounded-lg sm:rounded-xl transition-all ${depositType === 'yearly' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                    >
+                      Yearly Fixed Deposit
+                    </button>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-[9px] sm:text-[10px] font-bold text-gray-500 uppercase mb-1 truncate">Monthly (৳)</label>
-                        <input 
-                          type="number" 
-                          value={monthlyDepositAmount} 
-                          onChange={(e) => {
-                            setMonthlyDepositAmount(e.target.value);
-                            if (e.target.value) setStatusMessage(null);
-                          }}
-                          placeholder="0"
-                          max={(() => {
-                            if (selectedMemberIds.length === 1) {
-                              const member = members.find(m => m.id === selectedMemberIds[0]);
-                              if (member) {
-                                const targetAmount = getExpectedMonthlyAmount(member, depositMonth);
-                                const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === depositMonth && (t.type || 'monthly') === 'monthly');
-                                const alreadyPaid = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
-                                return Math.max(0, targetAmount - alreadyPaid);
-                              }
-                            }
-                            return undefined;
-                          })()}
-                          className="w-full px-2 sm:px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500" 
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[9px] sm:text-[10px] font-bold text-gray-500 uppercase mb-1 truncate">Yearly (৳)</label>
-                        <input 
-                          type="number" 
-                          value={yearlyDepositAmount} 
-                          onChange={(e) => {
-                            const member = members.find(m => m.id === selectedMemberIds[0]);
-                            if (member) {
-                              const targetAmount = getExpectedMonthlyAmount(member, depositMonth);
-                              const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === depositMonth && (t.type || 'monthly') === 'monthly');
-                              const alreadyPaid = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
-                              
-                              if (alreadyPaid < targetAmount && !monthlyDepositAmount) {
-                                setStatusMessage({ type: 'error', text: 'Please fill Monthly Contribution first' });
-                                return;
-                              }
-                            }
-                            setYearlyDepositAmount(e.target.value);
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                    <div>
+                      <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1">Select Month</label>
+                      <input 
+                        type="month" 
+                        value={depositMonth} 
+                        onChange={(e) => {
+                          const newMonth = e.target.value;
+                          setDepositMonth(newMonth);
+                          setSelectedMemberIds([]);
+                          setDepositAmount('');
+                          setMonthlyDepositAmount('');
+                          setYearlyDepositAmount('');
+                          
+                          if (settings.startDate && newMonth < settings.startDate) {
+                            setStatusMessage({ 
+                              type: 'error', 
+                              text: `Warning: Selected month is before the group start date (${settings.startDate})` 
+                            });
+                          } else {
                             setStatusMessage(null);
-                          }}
-                          placeholder="0"
-                          disabled={(() => {
-                            if (selectedMemberIds.length === 1) {
+                          }
+                        }}
+                        className={`w-full px-3 sm:px-4 py-2 border rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500 ${
+                          settings.startDate && depositMonth < settings.startDate ? 'border-red-300 bg-red-50' : 'border-gray-300'
+                        }`}
+                      />
+                      {settings.startDate && depositMonth < settings.startDate && (
+                        <p className="text-[10px] text-red-600 mt-1 font-medium">Month is before start date</p>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[9px] sm:text-[10px] font-bold text-gray-500 uppercase mb-1 truncate">Monthly (৳)</label>
+                          <input 
+                            type="number" 
+                            value={monthlyDepositAmount} 
+                            onChange={(e) => {
+                              setMonthlyDepositAmount(e.target.value);
+                              if (e.target.value) setStatusMessage(null);
+                            }}
+                            placeholder="0"
+                            max={(() => {
+                              if (selectedMemberIds.length === 1) {
+                                const member = members.find(m => m.id === selectedMemberIds[0]);
+                                if (member) {
+                                  const targetAmount = getExpectedMonthlyAmount(member, depositMonth);
+                                  const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === depositMonth && (t.type || 'monthly') === 'monthly');
+                                  const alreadyPaid = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
+                                  return Math.max(0, targetAmount - alreadyPaid);
+                                }
+                              }
+                              return undefined;
+                            })()}
+                            className="w-full px-2 sm:px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500" 
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] sm:text-[10px] font-bold text-gray-500 uppercase mb-1 truncate">Yearly (৳)</label>
+                          <input 
+                            type="number" 
+                            value={yearlyDepositAmount} 
+                            onChange={(e) => {
                               const member = members.find(m => m.id === selectedMemberIds[0]);
                               if (member) {
                                 const targetAmount = getExpectedMonthlyAmount(member, depositMonth);
                                 const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === depositMonth && (t.type || 'monthly') === 'monthly');
                                 const alreadyPaid = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
-                                return alreadyPaid < targetAmount && !monthlyDepositAmount;
+                                
+                                if (alreadyPaid < targetAmount && !monthlyDepositAmount) {
+                                  setStatusMessage({ type: 'error', text: 'Please fill Monthly Contribution first' });
+                                  return;
+                                }
                               }
-                            }
-                            return false;
-                          })()}
-                          max={(() => {
-                            if (selectedMemberIds.length === 1) {
-                              const member = members.find(m => m.id === selectedMemberIds[0]);
-                              if (member) {
-                                const currentYearCycleStart = getYearlyCycleStart(depositMonth, settings.startDate);
-                                const targetAmount = getYearlyTargetWithCarryover(member, transactions, settings, currentYearCycleStart);
-                                const currentTotal = getYearlyPaidInCycle(member, transactions, currentYearCycleStart);
-                                return Math.max(0, targetAmount - currentTotal);
-                              }
-                            }
-                            return undefined;
-                          })()}
-                          className={`w-full px-2 sm:px-3 py-2 border rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500 ${
-                            (() => {
+                              setYearlyDepositAmount(e.target.value);
+                              setStatusMessage(null);
+                            }}
+                            placeholder="0"
+                            disabled={(() => {
                               if (selectedMemberIds.length === 1) {
                                 const member = members.find(m => m.id === selectedMemberIds[0]);
                                 if (member) {
@@ -2101,138 +2197,174 @@ export const AdminDashboard = () => {
                                 }
                               }
                               return false;
-                            })() ? 'bg-gray-50 border-gray-200 cursor-not-allowed' : 'border-gray-300'
-                          }`}
-                        />
-                      </div>
-                    </div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="block text-sm font-medium text-gray-700">
-                      {depositView === 'pending' ? 'Select Members (Pending)' : 'Members (Completed)'}
-                    </label>
-                    {depositView === 'pending' && (
-                      <button 
-                        type="button"
-                        onClick={() => {
-                          const pendingMembers = members.filter(m => {
-                            const monthTransactions = transactions.filter(t => t.memberId === m.id && t.month === depositMonth);
-                            const paidThisMonth = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
-                            return paidThisMonth < m.monthlyContribution && m.status === 'Active';
-                          });
-                          if (selectedMemberIds.length === pendingMembers.length) {
-                            setSelectedMemberIds([]);
-                          } else {
-                            setSelectedMemberIds(pendingMembers.map(m => m.id));
-                          }
-                        }}
-                        className="text-xs font-bold text-indigo-600 hover:text-indigo-800"
-                      >
-                        {(() => {
-                          const pendingMembers = members.filter(m => {
-                            const monthTransactions = transactions.filter(t => t.memberId === m.id && t.month === depositMonth);
-                            const paidThisMonth = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
-                            return paidThisMonth < m.monthlyContribution && m.status === 'Active';
-                          });
-                          return selectedMemberIds.length === pendingMembers.length ? 'Deselect All' : 'Select All';
-                        })()}
-                      </button>
-                    )}
-                  </div>
-                  
-                  <div className="border border-gray-200 rounded-xl max-h-[250px] overflow-y-auto p-2 space-y-1">
-                    {(() => {
-                      const filteredMembers = members.filter(m => {
-                        const monthTransactions = transactions.filter(t => t.memberId === m.id && t.month === depositMonth);
-                        const paidThisMonth = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
-                        return depositView === 'pending' ? paidThisMonth < m.monthlyContribution : paidThisMonth >= m.monthlyContribution;
-                      });
-
-                      if (filteredMembers.length === 0) {
-                        return (
-                          <div className="text-center py-8 text-gray-400 text-sm italic">
-                            {depositView === 'pending' ? 'All members have paid for this month!' : 'No deposits logged for this month yet.'}
-                          </div>
-                        );
-                      }
-
-                      return filteredMembers.map(member => {
-                        const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === depositMonth);
-                        const paidThisMonth = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
-                        
-                        return (
-                          <label 
-                            key={member.id} 
-                            className={`flex items-center justify-between p-3 rounded-xl cursor-pointer transition-colors ${
-                              selectedMemberIds.includes(member.id) ? 'bg-indigo-50 border-indigo-100' : 'hover:bg-gray-50 border-transparent'
-                            } border`}
-                          >
-                            <div className="flex items-center gap-3">
-                              <input 
-                                type={depositView === 'pending' ? "checkbox" : "radio"}
-                                name="member-selection"
-                                checked={selectedMemberIds.includes(member.id)}
-                                onChange={(e) => {
-                                  let newSelected;
-                                  if (depositView === 'pending') {
-                                    if (e.target.checked) {
-                                      newSelected = [...selectedMemberIds, member.id];
-                                    } else {
-                                      newSelected = selectedMemberIds.filter(id => id !== member.id);
-                                    }
-                                  } else {
-                                    newSelected = [member.id];
+                            })()}
+                            max={(() => {
+                              if (selectedMemberIds.length === 1) {
+                                const member = members.find(m => m.id === selectedMemberIds[0]);
+                                if (member) {
+                                  const currentYearCycleStart = getYearlyCycleStart(depositMonth, settings.startDate);
+                                  const targetAmount = getYearlyTargetWithCarryover(member, transactions, settings, currentYearCycleStart);
+                                  const currentTotal = getYearlyPaidInCycle(member, transactions, currentYearCycleStart);
+                                  return Math.max(0, targetAmount - currentTotal);
+                                }
+                              }
+                              return undefined;
+                            })()}
+                            className={`w-full px-2 sm:px-3 py-2 border rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500 ${
+                              (() => {
+                                if (selectedMemberIds.length === 1) {
+                                  const member = members.find(m => m.id === selectedMemberIds[0]);
+                                  if (member) {
+                                    const targetAmount = getExpectedMonthlyAmount(member, depositMonth);
+                                    const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === depositMonth && (t.type || 'monthly') === 'monthly');
+                                    const alreadyPaid = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
+                                    return alreadyPaid < targetAmount && !monthlyDepositAmount;
                                   }
-                                  setSelectedMemberIds(newSelected);
-                                  
-                                  // If only one member is selected, default the amount
-                                  if (newSelected.length === 1) {
-                                    const selectedMember = members.find(m => m.id === newSelected[0]);
-                                    if (selectedMember) {
-                                      const mTransactions = transactions.filter(t => t.memberId === selectedMember.id && t.month === depositMonth);
-                                      if (depositView === 'pending') {
-                                        const alreadyPaid = mTransactions.reduce((sum, t) => sum + t.amount, 0);
-                                        const remaining = getExpectedMonthlyAmount(selectedMember, depositMonth) - alreadyPaid;
-                                        setDepositAmount(String(remaining));
-                                        setMonthlyDepositAmount(String(remaining > 0 ? remaining : 0));
+                                }
+                                return false;
+                              })() ? 'bg-gray-50 border-gray-200 cursor-not-allowed' : 'border-gray-300'
+                            }`}
+                          />
+                        </div>
+                      </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="block text-xs sm:text-sm font-medium text-gray-700">
+                        {depositView === 'pending' ? 'Select Members (Pending)' : 'Members (Completed)'}
+                      </label>
+                      {depositView === 'pending' && (
+                        <button 
+                          type="button"
+                          onClick={() => {
+                            const pendingMembers = members.filter(m => {
+                              const monthTransactions = transactions.filter(t => t.memberId === m.id && t.month === depositMonth);
+                              const paidThisMonth = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
+                              return paidThisMonth < getExpectedMonthlyAmount(m, depositMonth, settings) && m.status === 'Active';
+                            });
+                            if (selectedMemberIds.length === pendingMembers.length) {
+                              setSelectedMemberIds([]);
+                            } else {
+                              setSelectedMemberIds(pendingMembers.map(m => m.id));
+                            }
+                          }}
+                          className="text-xs font-bold text-indigo-600 hover:text-indigo-800"
+                        >
+                          {(() => {
+                            const pendingMembers = members.filter(m => {
+                              const monthTransactions = transactions.filter(t => t.memberId === m.id && t.month === depositMonth);
+                              const paidThisMonth = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
+                              return paidThisMonth < getExpectedMonthlyAmount(m, depositMonth, settings) && m.status === 'Active';
+                            });
+                            return selectedMemberIds.length === pendingMembers.length ? 'Deselect All' : 'Select All';
+                          })()}
+                        </button>
+                      )}
+                    </div>
+                    
+                    <div className="border border-gray-200 rounded-xl max-h-[160px] sm:max-h-[220px] overflow-y-auto p-1.5 sm:p-2 space-y-1">
+                      {(() => {
+                        const filteredMembers = members.filter(m => {
+                          const monthTransactions = transactions.filter(t => t.memberId === m.id && t.month === depositMonth);
+                          const paidThisMonth = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
+                          const target = getExpectedMonthlyAmount(m, depositMonth, settings);
+                          return depositView === 'pending' ? paidThisMonth < target : paidThisMonth >= target;
+                        });
+
+                        if (filteredMembers.length === 0) {
+                          return (
+                            <div className="text-center py-8 text-gray-400 text-sm italic">
+                              {depositView === 'pending' ? 'All members have paid for this month!' : 'No deposits logged for this month yet.'}
+                            </div>
+                          );
+                        }
+
+                        return filteredMembers.map(member => {
+                          const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === depositMonth);
+                          const paidThisMonth = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
+                          
+                          return (
+                            <label 
+                              key={member.id} 
+                              className={`flex items-center justify-between p-2.5 sm:p-3 rounded-xl cursor-pointer transition-colors ${
+                                selectedMemberIds.includes(member.id) ? 'bg-indigo-50 border-indigo-100' : 'hover:bg-gray-50 border-transparent'
+                              } border`}
+                            >
+                              <div className="flex items-center gap-2.5 sm:gap-3">
+                                <input 
+                                  type={depositView === 'pending' ? "checkbox" : "radio"}
+                                  name="member-selection"
+                                  checked={selectedMemberIds.includes(member.id)}
+                                  onChange={(e) => {
+                                    let newSelected;
+                                    if (depositView === 'pending') {
+                                      if (e.target.checked) {
+                                        newSelected = [...selectedMemberIds, member.id];
                                       } else {
-                                        const monthlyPaid = mTransactions.filter(t => (t.type || 'monthly') === 'monthly').reduce((sum, t) => sum + t.amount, 0);
-                                        const yearlyPaid = mTransactions.filter(t => t.type === 'yearly').reduce((sum, t) => sum + t.amount, 0);
-                                        setMonthlyDepositAmount(String(monthlyPaid));
-                                        setYearlyDepositAmount(String(yearlyPaid));
+                                        newSelected = selectedMemberIds.filter(id => id !== member.id);
+                                      }
+                                    } else {
+                                      newSelected = [member.id];
+                                    }
+                                    setSelectedMemberIds(newSelected);
+                                    
+                                    // If only one member is selected, default the amount
+                                    if (newSelected.length === 1) {
+                                      const selectedMember = members.find(m => m.id === newSelected[0]);
+                                      if (selectedMember) {
+                                        const mTransactions = transactions.filter(t => t.memberId === selectedMember.id && t.month === depositMonth);
+                                        if (depositView === 'pending') {
+                                          const alreadyPaid = mTransactions.reduce((sum, t) => sum + t.amount, 0);
+                                          const remaining = getExpectedMonthlyAmount(selectedMember, depositMonth) - alreadyPaid;
+                                          setDepositAmount(String(remaining));
+                                          setMonthlyDepositAmount(String(remaining > 0 ? remaining : 0));
+                                        } else {
+                                          const monthlyPaid = mTransactions.filter(t => (t.type || 'monthly') === 'monthly').reduce((sum, t) => sum + t.amount, 0);
+                                          const yearlyPaid = mTransactions.filter(t => t.type === 'yearly').reduce((sum, t) => sum + t.amount, 0);
+                                          setMonthlyDepositAmount(String(monthlyPaid));
+                                          setYearlyDepositAmount(String(yearlyPaid));
+                                        }
                                       }
                                     }
-                                  }
-                                }}
-                                className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
-                              />
-                              <div>
-                                <p className="text-sm font-bold text-gray-900 leading-none">{member.name}</p>
-                                <p className="text-[10px] text-gray-400 font-mono mt-1">{member.memberId}</p>
+                                  }}
+                                  className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                                />
+                                <div>
+                                  <p className="text-sm font-bold text-gray-900 leading-none">{member.name}</p>
+                                  <p className="text-[10px] text-gray-400 font-mono mt-1">{member.memberId}</p>
+                                </div>
                               </div>
-                            </div>
-                            <div className="text-right">
-                              <div className="flex flex-col items-end">
-                                <p className="text-xs font-bold text-gray-900 leading-none">
-                                  M: {formatCurrency(transactions.filter(t => t.memberId === member.id && t.month === depositMonth && (t.type || 'monthly') === 'monthly').reduce((sum, t) => sum + t.amount, 0))}
-                                </p>
-                                <p className="text-[10px] font-bold text-amber-600 mt-1">
-                                  Y: {formatCurrency(transactions.filter(t => t.memberId === member.id && t.month === depositMonth && t.type === 'yearly').reduce((sum, t) => sum + t.amount, 0))}
-                                </p>
+                              <div className="text-right">
+                                <div className="flex flex-col items-end">
+                                  <p className="text-xs font-bold text-gray-900 leading-none">
+                                    M: {formatCurrency(transactions.filter(t => t.memberId === member.id && t.month === depositMonth && (t.type || 'monthly') === 'monthly').reduce((sum, t) => sum + t.amount, 0))}
+                                  </p>
+                                  <p className="text-[10px] font-bold text-amber-600 mt-1">
+                                    Y: {formatCurrency(transactions.filter(t => t.memberId === member.id && t.month === depositMonth && t.type === 'yearly').reduce((sum, t) => sum + t.amount, 0))}
+                                  </p>
+                                </div>
                               </div>
-                            </div>
-                          </label>
-                        );
-                      });
-                    })()}
+                            </label>
+                          );
+                        });
+                      })()}
+                    </div>
                   </div>
                 </div>
 
-                <div className="pt-4 flex gap-3">
-                  <button type="button" onClick={() => { setIsDepositModalOpen(false); setSelectedMemberIds([]); }} className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50">Cancel</button>
+                <div className="p-3 sm:p-4 border-t border-gray-100 flex gap-3 bg-gray-50/90 sm:bg-white shrink-0">
+                  <button 
+                    type="button" 
+                    onClick={() => { setIsDepositModalOpen(false); setSelectedMemberIds([]); }} 
+                    className="flex-1 px-4 py-2.5 sm:py-2 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 font-medium text-sm transition-colors"
+                  >
+                    Cancel
+                  </button>
                   <button 
                     type="submit" 
                     disabled={selectedMemberIds.length === 0 || (settings.startDate && depositMonth < settings.startDate)}
-                    className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-1 px-4 py-2.5 sm:py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed shadow-sm shadow-indigo-100 transition-colors truncate"
                   >
                     {depositView === 'pending' 
                       ? `Confirm ${selectedMemberIds.length} Deposit(s)` 
@@ -2249,27 +2381,27 @@ export const AdminDashboard = () => {
       <AnimatePresence>
         {isHistoryModalOpen && historyMember && (
           <div 
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+            className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/50 backdrop-blur-sm overflow-y-auto"
             onClick={() => setIsHistoryModalOpen(false)}
           >
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden"
+              className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-lg max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden my-auto"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="px-6 py-6 bg-indigo-600 text-white flex justify-between items-center">
+              <div className="px-4 sm:px-6 py-4 sm:py-5 bg-indigo-600 text-white flex justify-between items-center shrink-0">
                 <div>
-                  <h3 className="text-xl font-bold">Payment History</h3>
-                  <p className="text-indigo-100 text-sm">{historyMember.name} ({historyMember.memberId})</p>
+                  <h3 className="text-lg sm:text-xl font-bold">Payment History</h3>
+                  <p className="text-indigo-100 text-xs sm:text-sm">{historyMember.name} ({historyMember.memberId})</p>
                 </div>
-                <button onClick={() => setIsHistoryModalOpen(false)} className="text-indigo-200 hover:text-white transition-colors">
-                  <X className="w-6 h-6" />
+                <button onClick={() => setIsHistoryModalOpen(false)} className="text-indigo-200 hover:text-white transition-colors p-1">
+                  <X className="w-5 h-5 sm:w-6 sm:h-6" />
                 </button>
               </div>
               
-              <div className="p-6 max-h-[60vh] overflow-y-auto space-y-4">
+              <div className="p-4 sm:p-6 overflow-y-auto space-y-3 sm:space-y-4 flex-1 min-h-0">
                 {getMonthsInRange(settings.startDate, new Date().toISOString().slice(0, 7)).reverse().map(m => {
                   const mTransactions = transactions.filter(t => t.memberId === historyMember.id && t.month === m);
                   const monthlyPaid = mTransactions.filter(t => (t.type || 'monthly') === 'monthly').reduce((sum, t) => sum + t.amount, 0);
@@ -2279,13 +2411,13 @@ export const AdminDashboard = () => {
                   const isPaid = monthlyPaid >= target;
                   
                   return (
-                    <div key={m} className={`p-4 rounded-2xl border flex items-center justify-between ${
+                    <div key={m} className={`p-3 sm:p-4 rounded-xl sm:rounded-2xl border flex items-center justify-between ${
                       isPaid ? 'bg-blue-50 border-blue-100' : 'bg-red-50 border-red-100'
                     }`}>
-                      <div className="flex items-center gap-3">
-                        <div className={`w-3 h-3 rounded-full ${isPaid ? 'bg-blue-600' : 'bg-red-500'}`} />
+                      <div className="flex items-center gap-2.5 sm:gap-3">
+                        <div className={`w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full ${isPaid ? 'bg-blue-600' : 'bg-red-500'}`} />
                         <div>
-                          <p className={`font-bold ${isPaid ? 'text-blue-900' : 'text-red-900'}`}>
+                          <p className={`text-sm sm:text-base font-bold ${isPaid ? 'text-blue-900' : 'text-red-900'}`}>
                             {new Date(m + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
                           </p>
                           <p className="text-[10px] text-gray-500 uppercase font-bold">Target: {formatCurrency(target)}</p>
@@ -2293,7 +2425,7 @@ export const AdminDashboard = () => {
                       </div>
                       <div className="text-right">
                         <div className="flex flex-col items-end">
-                          <p className={`text-sm font-bold ${isPaid ? 'text-blue-700' : 'text-red-700'}`}>
+                          <p className={`text-xs sm:text-sm font-bold ${isPaid ? 'text-blue-700' : 'text-red-700'}`}>
                             M: {formatCurrency(monthlyPaid)}
                           </p>
                           <p className="text-[10px] font-medium text-gray-500">
@@ -2309,7 +2441,7 @@ export const AdminDashboard = () => {
                 })}
               </div>
               
-              <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex justify-center gap-6">
+              <div className="px-4 sm:px-6 py-3 sm:py-4 bg-gray-50 border-t border-gray-100 flex justify-center gap-6 shrink-0">
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 rounded-full bg-blue-600" />
                   <span className="text-xs font-bold text-gray-600 uppercase">Paid</span>
@@ -2328,14 +2460,14 @@ export const AdminDashboard = () => {
       <AnimatePresence>
         {isConfirmDeleteOpen && (
           <div 
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+            className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/50 backdrop-blur-sm overflow-y-auto"
             onClick={() => setIsConfirmDeleteOpen(false)}
           >
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden p-6"
+              className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden p-6 my-auto"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="text-center">
@@ -2343,17 +2475,17 @@ export const AdminDashboard = () => {
                   <AlertCircle className="w-8 h-8 text-red-600" />
                 </div>
                 <h3 className="text-xl font-bold text-gray-900 mb-2">Confirm Delete</h3>
-                <p className="text-gray-500 mb-6">Are you sure you want to delete this member? This action cannot be undone.</p>
+                <p className="text-gray-500 mb-6 text-sm">Are you sure you want to delete this member? This action cannot be undone.</p>
                 <div className="flex gap-3">
                   <button 
                     onClick={() => setIsConfirmDeleteOpen(false)}
-                    className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50"
+                    className="flex-1 px-4 py-2.5 sm:py-2 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 text-sm font-medium transition-colors"
                   >
                     Cancel
                   </button>
                   <button 
                     onClick={handleDeleteMember}
-                    className="flex-1 px-4 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 font-semibold"
+                    className="flex-1 px-4 py-2.5 sm:py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 font-semibold text-sm shadow-sm shadow-red-100 transition-colors"
                   >
                     Delete
                   </button>
@@ -2384,74 +2516,76 @@ export const AdminDashboard = () => {
       <AnimatePresence>
         {isProfitModalOpen && (
           <div 
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+            className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/40 backdrop-blur-sm overflow-y-auto"
             onClick={() => { setIsProfitModalOpen(false); setEditingProfit(null); }}
           >
             <motion.div 
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
+              className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-md max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden my-auto"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="px-6 py-6 bg-indigo-600 text-white flex justify-between items-center">
+              <div className="px-4 sm:px-6 py-4 sm:py-5 bg-indigo-600 text-white flex justify-between items-center shrink-0">
                 <div>
-                  <h3 className="text-xl font-bold">{editingProfit ? 'Edit Group Profit' : 'Add Group Profit'}</h3>
-                  <p className="text-indigo-100 text-sm">This will be added to the total group balance.</p>
+                  <h3 className="text-lg sm:text-xl font-bold">{editingProfit ? 'Edit Group Profit' : 'Add Group Profit'}</h3>
+                  <p className="text-indigo-100 text-xs sm:text-sm">This will be added to the total group balance.</p>
                 </div>
-                <button onClick={() => { setIsProfitModalOpen(false); setEditingProfit(null); }} className="text-indigo-200 hover:text-white transition-colors">
-                  <X className="w-6 h-6" />
+                <button onClick={() => { setIsProfitModalOpen(false); setEditingProfit(null); }} className="text-indigo-200 hover:text-white transition-colors p-1">
+                  <X className="w-5 h-5 sm:w-6 sm:h-6" />
                 </button>
               </div>
               
-              <form onSubmit={handleSaveProfit} className="p-6 space-y-4">
-                <div>
-                  <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Profit Description</label>
-                  <input 
-                    type="text" 
-                    required
-                    value={profitForm.description}
-                    onChange={(e) => setProfitForm({...profitForm, description: e.target.value})}
-                    placeholder="e.g. Business investment return, Sales profit"
-                    className="w-full px-4 py-3 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
+              <form onSubmit={handleSaveProfit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+                <div className="p-4 sm:p-6 space-y-3 sm:space-y-4 overflow-y-auto flex-1 min-h-0">
                   <div>
-                    <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Amount (৳)</label>
+                    <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Profit Description</label>
                     <input 
-                      type="number" 
+                      type="text" 
                       required
-                      step="0.01"
-                      value={profitForm.amount}
-                      onChange={(e) => setProfitForm({...profitForm, amount: e.target.value})}
-                      placeholder="0.00"
-                      className="w-full px-4 py-3 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none"
+                      value={profitForm.description}
+                      onChange={(e) => setProfitForm({...profitForm, description: e.target.value})}
+                      placeholder="e.g. Business investment return, Sales profit"
+                      className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-200 rounded-xl sm:rounded-2xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none text-sm"
                     />
                   </div>
-                  <div>
-                    <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Date</label>
-                    <input 
-                      type="date" 
-                      required
-                      value={profitForm.date}
-                      onChange={(e) => setProfitForm({...profitForm, date: e.target.value})}
-                      className="w-full px-4 py-3 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none"
-                    />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Amount (৳)</label>
+                      <input 
+                        type="number" 
+                        required
+                        step="0.01"
+                        value={profitForm.amount}
+                        onChange={(e) => setProfitForm({...profitForm, amount: e.target.value})}
+                        placeholder="0.00"
+                        className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-200 rounded-xl sm:rounded-2xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Date</label>
+                      <input 
+                        type="date" 
+                        required
+                        value={profitForm.date}
+                        onChange={(e) => setProfitForm({...profitForm, date: e.target.value})}
+                        className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-200 rounded-xl sm:rounded-2xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none text-sm"
+                      />
+                    </div>
                   </div>
                 </div>
                 
-                <div className="flex gap-3 pt-4">
+                <div className="p-3 sm:p-4 border-t border-gray-100 flex gap-3 bg-gray-50/90 sm:bg-white shrink-0">
                   <button 
                     type="button"
                     onClick={() => { setIsProfitModalOpen(false); setEditingProfit(null); }}
-                    className="flex-1 px-4 py-3 border border-gray-200 text-gray-600 font-bold rounded-2xl hover:bg-gray-50 transition-all uppercase tracking-wider"
+                    className="flex-1 px-4 py-2.5 sm:py-3 border border-gray-200 text-gray-600 font-bold rounded-xl sm:rounded-2xl hover:bg-gray-50 transition-all uppercase tracking-wider text-xs sm:text-sm"
                   >
                     Cancel
                   </button>
                   <button 
                     type="submit"
-                    className="flex-1 px-4 py-3 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 uppercase tracking-wider"
+                    className="flex-1 px-4 py-2.5 sm:py-3 bg-indigo-600 text-white font-bold rounded-xl sm:rounded-2xl hover:bg-indigo-700 transition-all shadow-md shadow-indigo-100 uppercase tracking-wider text-xs sm:text-sm"
                   >
                     {editingProfit ? 'Update Profit' : 'Add Profit'}
                   </button>
@@ -2466,31 +2600,31 @@ export const AdminDashboard = () => {
       <AnimatePresence>
         {isConfirmDeleteProfitOpen && (
           <div 
-            className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+            className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4 bg-black/50 backdrop-blur-sm overflow-y-auto"
             onClick={() => setIsConfirmDeleteProfitOpen(false)}
           >
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl"
+              className="bg-white rounded-2xl sm:rounded-3xl p-6 sm:p-8 max-w-sm w-full text-center shadow-2xl my-auto"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
                 <AlertCircle className="w-8 h-8" />
               </div>
               <h3 className="text-xl font-bold text-gray-900 mb-2">Delete Profit Record?</h3>
-              <p className="text-gray-500 mb-8">This action cannot be undone and will affect total balance.</p>
+              <p className="text-gray-500 mb-6 text-sm">This action cannot be undone and will affect total balance.</p>
               <div className="flex gap-3">
                 <button 
                   onClick={() => setIsConfirmDeleteProfitOpen(false)}
-                  className="flex-1 px-4 py-3 bg-gray-100 text-gray-700 font-bold rounded-2xl hover:bg-gray-200 transition-colors uppercase tracking-wider text-sm"
+                  className="flex-1 px-4 py-2.5 sm:py-3 bg-gray-100 text-gray-700 font-bold rounded-xl sm:rounded-2xl hover:bg-gray-200 transition-colors uppercase tracking-wider text-xs sm:text-sm"
                 >
                   Cancel
                 </button>
                 <button 
                   onClick={handleDeleteProfit}
-                  className="flex-1 px-4 py-3 bg-red-600 text-white font-bold rounded-2xl hover:bg-red-700 transition-colors uppercase tracking-wider text-sm shadow-lg shadow-red-100"
+                  className="flex-1 px-4 py-2.5 sm:py-3 bg-red-600 text-white font-bold rounded-xl sm:rounded-2xl hover:bg-red-700 transition-colors uppercase tracking-wider text-xs sm:text-sm shadow-md shadow-red-100"
                 >
                   Delete
                 </button>
@@ -2504,87 +2638,89 @@ export const AdminDashboard = () => {
       <AnimatePresence>
         {isExpenseModalOpen && (
           <div 
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+            className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/40 backdrop-blur-sm overflow-y-auto"
             onClick={() => { setIsExpenseModalOpen(false); setEditingExpense(null); }}
           >
             <motion.div 
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
+              className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-md max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden my-auto"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="px-6 py-6 bg-red-600 text-white flex justify-between items-center">
+              <div className="px-4 sm:px-6 py-4 sm:py-5 bg-red-600 text-white flex justify-between items-center shrink-0">
                 <div>
-                  <h3 className="text-xl font-bold">{editingExpense ? 'Edit Expense' : 'Add Expense'}</h3>
-                  <p className="text-red-100 text-sm">Track group spending and overheads.</p>
+                  <h3 className="text-lg sm:text-xl font-bold">{editingExpense ? 'Edit Expense' : 'Add Expense'}</h3>
+                  <p className="text-red-100 text-xs sm:text-sm">Track group spending and overheads.</p>
                 </div>
-                <button onClick={() => { setIsExpenseModalOpen(false); setEditingExpense(null); }} className="text-red-200 hover:text-white transition-colors">
-                  <X className="w-6 h-6" />
+                <button onClick={() => { setIsExpenseModalOpen(false); setEditingExpense(null); }} className="text-red-200 hover:text-white transition-colors p-1">
+                  <X className="w-5 h-5 sm:w-6 sm:h-6" />
                 </button>
               </div>
               
-              <form onSubmit={handleSaveExpense} className="p-6 space-y-4">
-                <div>
-                  <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Expense Description</label>
-                  <input 
-                    type="text" 
-                    required
-                    value={expenseForm.description}
-                    onChange={(e) => setExpenseForm({...expenseForm, description: e.target.value})}
-                    placeholder="e.g. Office rent, Stationery, Bank fees"
-                    className="w-full px-4 py-3 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-red-500 focus:border-red-500 transition-all outline-none"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
+              <form onSubmit={handleSaveExpense} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+                <div className="p-4 sm:p-6 space-y-3 sm:space-y-4 overflow-y-auto flex-1 min-h-0">
                   <div>
-                    <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Amount (৳)</label>
+                    <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Expense Description</label>
                     <input 
-                      type="number" 
+                      type="text" 
                       required
-                      step="0.01"
-                      value={expenseForm.amount}
-                      onChange={(e) => setExpenseForm({...expenseForm, amount: e.target.value})}
-                      placeholder="0.00"
-                      className="w-full px-4 py-3 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-red-500 focus:border-red-500 transition-all outline-none"
+                      value={expenseForm.description}
+                      onChange={(e) => setExpenseForm({...expenseForm, description: e.target.value})}
+                      placeholder="e.g. Office rent, Stationery, Bank fees"
+                      className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-200 rounded-xl sm:rounded-2xl focus:ring-2 focus:ring-red-500 focus:border-red-500 transition-all outline-none text-sm"
                     />
                   </div>
-                  <div>
-                    <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Date</label>
-                    <input 
-                      type="date" 
-                      required
-                      value={expenseForm.date}
-                      onChange={(e) => setExpenseForm({...expenseForm, date: e.target.value})}
-                      className="w-full px-4 py-3 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-red-500 focus:border-red-500 transition-all outline-none"
-                    />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Amount (৳)</label>
+                      <input 
+                        type="number" 
+                        required
+                        step="0.01"
+                        value={expenseForm.amount}
+                        onChange={(e) => setExpenseForm({...expenseForm, amount: e.target.value})}
+                        placeholder="0.00"
+                        className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-200 rounded-xl sm:rounded-2xl focus:ring-2 focus:ring-red-500 focus:border-red-500 transition-all outline-none text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">Date</label>
+                      <input 
+                        type="date" 
+                        required
+                        value={expenseForm.date}
+                        onChange={(e) => setExpenseForm({...expenseForm, date: e.target.value})}
+                        className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-200 rounded-xl sm:rounded-2xl focus:ring-2 focus:ring-red-500 focus:border-red-500 transition-all outline-none text-sm"
+                      />
+                    </div>
                   </div>
-                </div>
 
-                <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-2xl group cursor-pointer" onClick={() => setExpenseForm({...expenseForm, deductFromBalance: !expenseForm.deductFromBalance})}>
-                  <div className={`p-2 rounded-xl transition-colors ${expenseForm.deductFromBalance ? 'bg-red-100 text-red-600' : 'bg-gray-200 text-gray-400'}`}>
-                    <MinusCircle className="w-5 h-5" />
-                  </div>
-                  <div className="flex-grow">
-                    <p className="text-sm font-bold text-gray-700">Deduct from Balance</p>
-                    <p className="text-[10px] text-gray-400 font-medium">Subtract this amount from final group balance</p>
-                  </div>
-                  <div className={`w-12 h-6 rounded-full p-1 transition-colors relative ${expenseForm.deductFromBalance ? 'bg-red-600' : 'bg-gray-300'}`}>
-                    <div className={`w-4 h-4 bg-white rounded-full transition-transform shadow-sm ${expenseForm.deductFromBalance ? 'translate-x-6' : 'translate-x-0'}`} />
+                  <div className="flex items-center gap-3 p-3 sm:p-4 bg-gray-50 rounded-xl sm:rounded-2xl group cursor-pointer" onClick={() => setExpenseForm({...expenseForm, deductFromBalance: !expenseForm.deductFromBalance})}>
+                    <div className={`p-2 rounded-xl transition-colors ${expenseForm.deductFromBalance ? 'bg-red-100 text-red-600' : 'bg-gray-200 text-gray-400'}`}>
+                      <MinusCircle className="w-5 h-5" />
+                    </div>
+                    <div className="flex-grow">
+                      <p className="text-sm font-bold text-gray-700">Deduct from Balance</p>
+                      <p className="text-[10px] text-gray-400 font-medium">Subtract this amount from final group balance</p>
+                    </div>
+                    <div className={`w-12 h-6 rounded-full p-1 transition-colors relative ${expenseForm.deductFromBalance ? 'bg-red-600' : 'bg-gray-300'}`}>
+                      <div className={`w-4 h-4 bg-white rounded-full transition-transform shadow-sm ${expenseForm.deductFromBalance ? 'translate-x-6' : 'translate-x-0'}`} />
+                    </div>
                   </div>
                 </div>
                 
-                <div className="flex gap-3 pt-4">
+                <div className="p-3 sm:p-4 border-t border-gray-100 flex gap-3 bg-gray-50/90 sm:bg-white shrink-0">
                   <button 
                     type="button"
                     onClick={() => { setIsExpenseModalOpen(false); setEditingExpense(null); }}
-                    className="flex-1 px-4 py-3 border border-gray-200 text-gray-600 font-bold rounded-2xl hover:bg-gray-50 transition-all uppercase tracking-wider"
+                    className="flex-1 px-4 py-2.5 sm:py-3 border border-gray-200 text-gray-600 font-bold rounded-xl sm:rounded-2xl hover:bg-gray-50 transition-all uppercase tracking-wider text-xs sm:text-sm"
                   >
                     Cancel
                   </button>
                   <button 
                     type="submit"
-                    className="flex-1 px-4 py-3 bg-red-600 text-white font-bold rounded-2xl hover:bg-red-700 transition-all shadow-lg shadow-red-100 uppercase tracking-wider"
+                    className="flex-1 px-4 py-2.5 sm:py-3 bg-red-600 text-white font-bold rounded-xl sm:rounded-2xl hover:bg-red-700 transition-all shadow-md shadow-red-100 uppercase tracking-wider text-xs sm:text-sm"
                   >
                     {editingExpense ? 'Update Expense' : 'Add Expense'}
                   </button>

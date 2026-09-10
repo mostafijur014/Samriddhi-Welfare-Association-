@@ -158,7 +158,7 @@ export const PublicView = () => {
   });
 
   // Column 2: Who completed their deposit this month
-  const column2Data = column1Data.filter(m => m.paidThisMonth >= getExpectedMonthlyAmount(m, currentMonth));
+  const column2Data = column1Data.filter(m => m.paidThisMonth >= getExpectedMonthlyAmount(m, currentMonth, settings));
 
   // Column 3: Due person information (total dues across all months)
   const currentDay = new Date().getDate();
@@ -169,7 +169,7 @@ export const PublicView = () => {
     let dueColor = 'red'; 
     let shouldShow = totalDue > 0;
 
-    const currentExpected = getExpectedMonthlyAmount(member, currentMonth);
+    const currentExpected = getExpectedMonthlyAmount(member, currentMonth, settings);
 
     // If they only owe for the current month (or less)
     if (totalDue <= currentExpected) {
@@ -303,7 +303,7 @@ export const PublicView = () => {
             {column1Data.map(member => (
               <div key={member.id} className="flex items-center justify-between p-2 rounded-xl hover:bg-gray-50 transition-colors border border-transparent hover:border-gray-100">
                 <div className="flex items-center gap-3">
-                  <div className={`w-2 h-2 rounded-full ${member.paidThisMonth >= getExpectedMonthlyAmount(member, currentMonth) ? 'bg-green-500' : member.paidThisMonth > 0 ? 'bg-yellow-500' : 'bg-red-500'}`} />
+                  <div className={`w-2 h-2 rounded-full ${member.paidThisMonth >= getExpectedMonthlyAmount(member, currentMonth, settings) ? 'bg-green-500' : member.paidThisMonth > 0 ? 'bg-yellow-500' : 'bg-red-500'}`} />
                   <div>
                     <p className="text-sm font-bold text-gray-900 leading-none">{member.name}</p>
                     <p className="text-[10px] text-gray-400 font-mono mt-1">{member.memberId}</p>
@@ -314,7 +314,7 @@ export const PublicView = () => {
                     <p className="text-sm font-black text-gray-900 leading-none">M: {formatCurrency(member.monthlyPaid)}</p>
                     <p className="text-[10px] font-bold text-amber-600 mt-1">Y: {formatCurrency(member.yearlyPaid)}</p>
                   </div>
-                  <p className="text-[9px] text-gray-400 uppercase font-bold mt-1">Target: {formatCurrency(getExpectedMonthlyAmount(member, currentMonth))}</p>
+                  <p className="text-[9px] text-gray-400 uppercase font-bold mt-1">Target: {formatCurrency(getExpectedMonthlyAmount(member, currentMonth, settings))}</p>
                 </div>
               </div>
             ))}
@@ -594,7 +594,7 @@ export const PublicView = () => {
                 
                 const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === viewMonth);
                 const totalForViewMonth = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
-                const isPaidInViewMonth = totalForViewMonth >= getExpectedMonthlyAmount(member, viewMonth);
+                const isPaidInViewMonth = totalForViewMonth >= getExpectedMonthlyAmount(member, viewMonth, settings);
 
                 return (
                   <tr key={member.id} className="hover:bg-gray-50 transition-colors">
@@ -614,7 +614,7 @@ export const PublicView = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex flex-col">
-                        <span className="text-sm text-gray-900 font-medium">{formatCurrency(getExpectedMonthlyAmount(member, viewMonth))}</span>
+                        <span className="text-sm text-gray-900 font-medium">{formatCurrency(getExpectedMonthlyAmount(member, viewMonth, settings))}</span>
                         <span className="text-[10px] text-gray-500">Yearly: {formatCurrency(member.yearlyFixedDeposit || 0)}</span>
                       </div>
                     </td>
@@ -656,7 +656,7 @@ export const PublicView = () => {
                         <div className="flex items-center gap-1 mb-1">
                           {getMonthsInRange(settings.startDate, currentMonth).slice(-3).map(m => {
                             const mPaid = transactions.filter(t => t.memberId === member.id && t.month === m).reduce((sum, t) => sum + t.amount, 0);
-                            const mTarget = getExpectedMonthlyAmount(member, m);
+                            const mTarget = getExpectedMonthlyAmount(member, m, settings);
                             const isPaid = mPaid >= mTarget;
                             return (
                               <div key={m} className="flex flex-col items-center">
@@ -779,7 +779,7 @@ export const PublicView = () => {
                     
                     const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === month && (t.type || 'monthly') === 'monthly');
                     const totalForMonth = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
-                    const expectedForMonth = getExpectedMonthlyAmount(member, month);
+                    const expectedForMonth = getExpectedMonthlyAmount(member, month, settings);
                     
                     let statusText = 'Not Paid';
                     let statusColor = 'text-red-600 bg-red-50 border-red-100';
@@ -1071,7 +1071,7 @@ export const PublicView = () => {
                   const mTransactions = transactions.filter(t => t.memberId === historyMember.id && t.month === m);
                   const monthlyPaid = mTransactions.filter(t => (t.type || 'monthly') === 'monthly').reduce((sum, t) => sum + t.amount, 0);
                   const yearlyPaid = mTransactions.filter(t => t.type === 'yearly').reduce((sum, t) => sum + t.amount, 0);
-                  const target = getExpectedMonthlyAmount(historyMember, m);
+                  const target = getExpectedMonthlyAmount(historyMember, m, settings);
                   const isPaid = monthlyPaid >= target;
                   
                   return (

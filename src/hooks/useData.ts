@@ -72,6 +72,9 @@ export interface Settings {
   contactPerson1?: ContactPerson;
   contactPerson2?: ContactPerson;
   contactPerson3?: ContactPerson;
+  monthlyOldAmount?: number;
+  monthlyNewAmount?: number;
+  monthlyIncreaseEffectiveMonth?: string;
 }
 
 export const useData = () => {
@@ -80,15 +83,18 @@ export const useData = () => {
   const [profits, setProfits] = useState<Profit[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [settings, setSettings] = useState<Settings>({ 
-    duration: 12,
-    startDate: new Date().toISOString().slice(0, 7), // Default to current month
-    announcementSpeed: 40, // Default speed
+    duration: 24,
+    startDate: '2025-09',
+    announcementSpeed: 40,
     tagline1: 'Samriddhi Welfare Association',
     tagline2: 'Collective savings, strong future',
     heroTitle: 'Savings Group Overview',
     heroSubtitle: 'Transparent tracking of our collective growth.',
     dueStartDate: 15,
-    dueEndDate: 20
+    dueEndDate: 20,
+    monthlyOldAmount: 1000,
+    monthlyNewAmount: 2000,
+    monthlyIncreaseEffectiveMonth: '2026-09'
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

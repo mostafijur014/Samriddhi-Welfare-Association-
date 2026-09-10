@@ -3,16 +3,34 @@ import { Member, Settings, Transaction } from '../hooks/useData';
 /**
  * Gets the expected monthly contribution for a specific month based on history.
  */
-export const getExpectedMonthlyAmount = (member: Member, month: string): number => {
-  if (!member.monthlyContributionHistory || member.monthlyContributionHistory.length === 0) {
-    return member.monthlyContribution;
+export const getExpectedMonthlyAmount = (member: Member, month: string, settings?: Settings): number => {
+  if (member.monthlyContributionHistory && member.monthlyContributionHistory.length > 0) {
+    // Sort history by startMonth descending to find the latest applicable one
+    const sortedHistory = [...member.monthlyContributionHistory].sort((a, b) => b.startMonth.localeCompare(a.startMonth));
+    
+    const applicable = sortedHistory.find(h => h.startMonth <= month);
+    if (applicable) {
+      return applicable.amount;
+    }
+
+    // If the month is earlier than the earliest entry in history,
+    // preserve historical data by returning the earliest recorded amount (e.g. 1000 tk),
+    // NEVER the newer increased monthlyContribution (2000 tk)!
+    const earliest = sortedHistory[sortedHistory.length - 1];
+    if (earliest) {
+      return earliest.amount;
+    }
   }
 
-  // Sort history by startMonth descending to find the latest applicable one
-  const sortedHistory = [...member.monthlyContributionHistory].sort((a, b) => b.startMonth.localeCompare(a.startMonth));
-  
-  const applicable = sortedHistory.find(h => h.startMonth <= month);
-  return applicable ? applicable.amount : member.monthlyContribution;
+  // Fallback if no history exists:
+  // Before running month (2026-09 or settings.monthlyIncreaseEffectiveMonth), deposit was 1000 tk.
+  const effectiveMonth = settings?.monthlyIncreaseEffectiveMonth || '2026-09';
+  const oldAmount = settings?.monthlyOldAmount ?? 1000;
+  if (month < effectiveMonth) {
+    return oldAmount;
+  }
+
+  return member.monthlyContribution || (settings?.monthlyNewAmount ?? 2000);
 };
 
 /**
@@ -25,7 +43,12 @@ export const getExpectedYearlyAmount = (member: Member, month: string): number =
 
   const sortedHistory = [...member.yearlyDepositHistory].sort((a, b) => b.startMonth.localeCompare(a.startMonth));
   const applicable = sortedHistory.find(h => h.startMonth <= month);
-  return applicable ? applicable.amount : member.yearlyFixedDeposit;
+  if (applicable) {
+    return applicable.amount;
+  }
+
+  const earliest = sortedHistory[sortedHistory.length - 1];
+  return earliest ? earliest.amount : member.yearlyFixedDeposit;
 };
 
 /**
@@ -43,7 +66,7 @@ export const getTotalExpectedMonthly = (member: Member, settings: Settings, endM
     current.setMonth(current.getMonth() + 1);
   }
   
-  return months.reduce((sum, m) => sum + getExpectedMonthlyAmount(member, m), 0);
+  return months.reduce((sum, m) => sum + getExpectedMonthlyAmount(member, m, settings), 0);
 };
 
 /**
