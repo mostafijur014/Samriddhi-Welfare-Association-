@@ -150,3 +150,23 @@ export const getYearlyPaidInCycle = (
     .filter(t => t.memberId === member.id && t.type === 'yearly' && t.month >= cycleStart && t.month < cycleEnd)
     .reduce((sum, t) => sum + t.amount, 0);
 };
+
+/**
+ * Checks whether the yearly deposit option is currently active.
+ * Defaults to false (stopped) unless explicitly enabled in settings.
+ */
+export const isYearlyDepositEnabled = (settings?: Settings): boolean => {
+  return settings?.enableYearlyDeposit === true;
+};
+
+/**
+ * Returns a member's totalYearlyPaid after applying the pending
+ * -2,000 Tk adjustment for Dulal Miah if not yet persisted to Firestore.
+ */
+export const getEffectiveTotalYearlyPaid = (member: Member, settings?: Settings): number => {
+  const raw = Number(member.totalYearlyPaid) || 0;
+  if (!settings?.dulalYearly2000Removed && member.name.trim().toLowerCase().includes('dulal') && raw >= 2000) {
+    return Math.max(0, raw - 2000);
+  }
+  return raw;
+};

@@ -57,6 +57,7 @@ export interface ContactPerson {
 }
 
 export interface Settings {
+  id?: string;
   duration: number;
   startDate: string;
   announcement?: string;
@@ -69,6 +70,8 @@ export interface Settings {
   dueStartDate?: number;
   dueEndDate?: number;
   showContactPersons?: boolean;
+  enableYearlyDeposit?: boolean;
+  dulalYearly2000Removed?: boolean;
   contactPerson1?: ContactPerson;
   contactPerson2?: ContactPerson;
   contactPerson3?: ContactPerson;
@@ -92,6 +95,7 @@ export const useData = () => {
     heroSubtitle: 'Transparent tracking of our collective growth.',
     dueStartDate: 15,
     dueEndDate: 20,
+    enableYearlyDeposit: false,
     monthlyOldAmount: 1000,
     monthlyNewAmount: 2000,
     monthlyIncreaseEffectiveMonth: '2026-09'
@@ -158,7 +162,7 @@ export const useData = () => {
 
     const unsubSettings = onSnapshot(collection(db, 'settings'), (snapshot) => {
       if (!snapshot.empty) {
-        setSettings(snapshot.docs[0].data() as Settings);
+        setSettings({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() } as Settings);
       }
       settingsLoaded = true;
       checkLoading();

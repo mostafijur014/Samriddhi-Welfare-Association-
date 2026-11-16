@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useData, Member, Transaction, Settings } from '../hooks/useData';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, addDoc, updateDoc, deleteDoc, doc, setDoc, serverTimestamp, getDocs, query, limit } from 'firebase/firestore';
@@ -8,7 +8,9 @@ import {
   getTotalExpectedMonthly, 
   getYearlyCycleStart, 
   getYearlyTargetWithCarryover,
-  getYearlyPaidInCycle
+  getYearlyPaidInCycle,
+  isYearlyDepositEnabled,
+  getEffectiveTotalYearlyPaid
 } from '../utils/financials';
 import { 
   Plus, Edit2, Trash2, Settings as SettingsIcon, 
@@ -62,12 +64,16 @@ const SortableMemberRow: React.FC<{
     opacity: isDragging ? 0.5 : 1,
   };
 
+  const showYearly = isYearlyDepositEnabled(settings);
   const currentMonth = new Date().toISOString().slice(0, 7);
   const currentYearCycleStart = getYearlyCycleStart(currentMonth, settings.startDate);
   const yearlyTarget = getYearlyTargetWithCarryover(member, transactions, settings, currentYearCycleStart);
-  const yearlyPaid = getYearlyPaidInCycle(member, transactions, currentYearCycleStart);
+  const rawYearlyPaid = getYearlyPaidInCycle(member, transactions, currentYearCycleStart);
+  const isUnadjustedDulal = !settings?.dulalYearly2000Removed && member.name.trim().toLowerCase().includes('dulal');
+  const yearlyPaid = isUnadjustedDulal && rawYearlyPaid >= 2000 ? Math.max(0, rawYearlyPaid - 2000) : rawYearlyPaid;
   
-  const totalPaid = member.totalDeposited + (member.totalYearlyPaid || 0);
+  const effectiveYearlyPaid = getEffectiveTotalYearlyPaid(member, settings);
+  const totalPaid = member.totalDeposited + effectiveYearlyPaid;
 
   const expectedMonthsTotal = getTotalExpectedMonthly(member, settings, currentMonth);
   const isBehind = member.totalDeposited < expectedMonthsTotal;
@@ -112,17 +118,21 @@ const SortableMemberRow: React.FC<{
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
         <div className="flex flex-col">
-          <span className="font-medium">{formatCurrency(getExpectedMonthlyAmount(member, currentMonth))}</span>
-          <span className="text-[10px] text-gray-500">Yearly: {formatCurrency(yearlyTarget)}</span>
+          <span className="font-medium">{formatCurrency(getExpectedMonthlyAmount(member, currentMonth, settings))}</span>
+          {showYearly && (
+            <span className="text-[10px] text-gray-500">Yearly: {formatCurrency(yearlyTarget)}</span>
+          )}
         </div>
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-semibold">
         <div className="flex flex-col">
           <span>{formatCurrency(member.totalDeposited)}</span>
-          <span className={`text-[10px] ${yearlyPaid >= yearlyTarget && yearlyTarget > 0 ? 'text-green-600 font-bold' : 'text-amber-600'}`}>
-            Y: {formatCurrency(yearlyPaid)}
-            {yearlyPaid >= yearlyTarget && yearlyTarget > 0 && ' ✓'}
-          </span>
+          {showYearly && (
+            <span className={`text-[10px] ${yearlyPaid >= yearlyTarget && yearlyTarget > 0 ? 'text-green-600 font-bold' : 'text-amber-600'}`}>
+              Y: {formatCurrency(yearlyPaid)}
+              {yearlyPaid >= yearlyTarget && yearlyTarget > 0 && ' ✓'}
+            </span>
+          )}
         </div>
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-indigo-600">
@@ -132,8 +142,8 @@ const SortableMemberRow: React.FC<{
         <div className="flex flex-col">
           <div className="flex items-center gap-1 mb-1">
             {months.map(m => {
-              const mPaid = transactions.filter(t => t.memberId === member.id && t.month === m).reduce((sum, t) => sum + t.amount, 0);
-              const mTarget = getExpectedMonthlyAmount(member, m);
+              const mPaid = transactions.filter(t => t.memberId === member.id && t.month === m && (t.type || 'monthly') === 'monthly').reduce((sum, t) => sum + t.amount, 0);
+              const mTarget = getExpectedMonthlyAmount(member, m, settings);
               const isPaid = mPaid >= mTarget;
               return (
                 <div key={m} className="flex flex-col items-center">
@@ -275,6 +285,7 @@ export const AdminDashboard = () => {
     monthlyOldAmount: 1000,
     monthlyNewAmount: 2000,
     monthlyIncreaseEffectiveMonth: '2026-09',
+    enableYearlyDeposit: false,
     announcement: '',
     showAnnouncement: false,
     announcementSpeed: 40,
@@ -301,6 +312,9 @@ export const AdminDashboard = () => {
     setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
   };
 
+  const dulalCleanupAttemptedRef = useRef(false);
+  const showYearly = isYearlyDepositEnabled(settings);
+
   // Sync settings form when data loads
   useEffect(() => {
     if (settings) {
@@ -310,6 +324,7 @@ export const AdminDashboard = () => {
         monthlyOldAmount: settings.monthlyOldAmount ?? 1000,
         monthlyNewAmount: settings.monthlyNewAmount ?? 2000,
         monthlyIncreaseEffectiveMonth: settings.monthlyIncreaseEffectiveMonth || '2026-09',
+        enableYearlyDeposit: settings.enableYearlyDeposit === true,
         announcement: settings.announcement || '',
         showAnnouncement: settings.showAnnouncement || false,
         announcementSpeed: settings.announcementSpeed || 40,
@@ -326,6 +341,94 @@ export const AdminDashboard = () => {
       });
     }
   }, [settings]);
+
+  // One-time cleanup: remove Dulal Miah's 2,000 Tk yearly deposit from Firestore
+  useEffect(() => {
+    if (loading || !members.length || settings.dulalYearly2000Removed === true || dulalCleanupAttemptedRef.current) {
+      return;
+    }
+    dulalCleanupAttemptedRef.current = true;
+
+    const runDulalYearlyCleanup = async () => {
+      try {
+        const dulal = members.find(m => m.name.trim().toLowerCase().includes('dulal'));
+        let removedAmount = 0;
+
+        if (dulal) {
+          const dulalYearlyTxs = transactions.filter(
+            t => t.memberId === dulal.id && t.type === 'yearly'
+          );
+
+          const exactTx = dulalYearlyTxs.find(t => Number(t.amount) === 2000);
+          if (exactTx) {
+            await deleteDoc(doc(db, 'transactions', exactTx.id));
+            removedAmount = 2000;
+          } else if (dulalYearlyTxs.length > 0) {
+            let remainingToDeduct = 2000;
+            for (const tx of dulalYearlyTxs) {
+              if (remainingToDeduct <= 0) break;
+              const txAmt = Number(tx.amount) || 0;
+              if (txAmt <= remainingToDeduct) {
+                await deleteDoc(doc(db, 'transactions', tx.id));
+                remainingToDeduct -= txAmt;
+                removedAmount += txAmt;
+              } else {
+                await updateDoc(doc(db, 'transactions', tx.id), {
+                  amount: txAmt - remainingToDeduct
+                });
+                removedAmount += remainingToDeduct;
+                remainingToDeduct = 0;
+              }
+            }
+          }
+
+          const currentTotalYearly = Number(dulal.totalYearlyPaid) || 0;
+          const deductFromMember = removedAmount > 0 ? removedAmount : (currentTotalYearly >= 2000 ? 2000 : currentTotalYearly);
+          if (deductFromMember > 0) {
+            await updateDoc(doc(db, 'members', dulal.id), {
+              totalYearlyPaid: Math.max(0, currentTotalYearly - deductFromMember)
+            });
+            removedAmount = deductFromMember;
+          }
+        }
+
+        const settingsColl = collection(db, 'settings');
+        if (settings.id) {
+          await updateDoc(doc(db, 'settings', settings.id), {
+            dulalYearly2000Removed: true,
+            ...(settings.enableYearlyDeposit === undefined ? { enableYearlyDeposit: false } : {})
+          });
+        } else {
+          const snap = await getDocs(query(settingsColl, limit(1)));
+          if (!snap.empty) {
+            await updateDoc(doc(db, 'settings', snap.docs[0].id), {
+              dulalYearly2000Removed: true,
+              ...(snap.docs[0].data().enableYearlyDeposit === undefined ? { enableYearlyDeposit: false } : {})
+            });
+          } else {
+            await addDoc(settingsColl, {
+              duration: settings.duration || 24,
+              startDate: settings.startDate || '2025-09',
+              enableYearlyDeposit: false,
+              dulalYearly2000Removed: true,
+              updatedAt: new Date().toISOString()
+            });
+          }
+        }
+
+        if (removedAmount > 0) {
+          setStatusMessage({
+            type: 'success',
+            text: `Adjusted Dulal Miah's yearly deposit (-৳${removedAmount}) from Yearly Collection & Final Balance.`
+          });
+        }
+      } catch (err) {
+        console.error('Error running Dulal Miah yearly cleanup:', err);
+      }
+    };
+
+    runDulalYearlyCleanup();
+  }, [loading, members, transactions, settings]);
 
   const getMonthsSinceStart = () => {
     if (!settings.startDate) return [];
@@ -355,12 +458,13 @@ export const AdminDashboard = () => {
   // Column 1: All members and their deposit this month
   const column1Data = members.map(member => {
     const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === currentMonth);
-    const paidThisMonth = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
+    const monthlyPaid = monthTransactions.filter(t => (t.type || 'monthly') === 'monthly').reduce((sum, t) => sum + t.amount, 0);
+    const paidThisMonth = showYearly ? monthTransactions.reduce((sum, t) => sum + t.amount, 0) : monthlyPaid;
     return { ...member, paidThisMonth };
   });
 
   // Column 2: Who completed their deposit this month
-  const column2Data = column1Data.filter(m => m.paidThisMonth >= getExpectedMonthlyAmount(m, currentMonth));
+  const column2Data = column1Data.filter(m => m.paidThisMonth >= getExpectedMonthlyAmount(m, currentMonth, settings));
 
   // Column 3: Due person information (total dues across all months)
   const currentDay = new Date().getDate();
@@ -371,7 +475,7 @@ export const AdminDashboard = () => {
     let dueColor = 'red'; 
     let shouldShow = totalDue > 0;
 
-    const currentExpected = getExpectedMonthlyAmount(member, currentMonth);
+    const currentExpected = getExpectedMonthlyAmount(member, currentMonth, settings);
 
     // If they only owe for the current month (or less)
     if (totalDue <= currentExpected) {
@@ -397,7 +501,9 @@ export const AdminDashboard = () => {
   
   const yearlyColumn1Data = members.map(member => {
     const target = getYearlyTargetWithCarryover(member, transactions, settings, currentYearCycleStart);
-    const paid = getYearlyPaidInCycle(member, transactions, currentYearCycleStart);
+    const rawPaid = getYearlyPaidInCycle(member, transactions, currentYearCycleStart);
+    const isUnadjustedDulal = !settings?.dulalYearly2000Removed && member.name.trim().toLowerCase().includes('dulal');
+    const paid = isUnadjustedDulal && rawPaid >= 2000 ? Math.max(0, rawPaid - 2000) : rawPaid;
     return {
       ...member,
       yearlyTarget: target,
@@ -438,7 +544,9 @@ export const AdminDashboard = () => {
   const handleSaveMember = async (e: React.FormEvent) => {
     e.preventDefault();
     const newMonthly = Number(memberForm.monthlyContribution);
-    const newYearly = Number(memberForm.yearlyFixedDeposit);
+    const newYearly = showYearly
+      ? (Number(memberForm.yearlyFixedDeposit) || 0)
+      : (editingMember ? (editingMember.yearlyFixedDeposit || 0) : 0);
     const currentMonth = new Date().toISOString().slice(0, 7);
 
     const data: any = {
@@ -468,16 +576,18 @@ export const AdminDashboard = () => {
       data.monthlyContributionHistory = monthlyHistory;
     }
 
-    // Handle Yearly Deposit History
-    let yearlyHistory = editingMember?.yearlyDepositHistory || [];
-    if (!editingMember || editingMember.yearlyFixedDeposit !== newYearly) {
-      const existingIndex = yearlyHistory.findIndex(h => h.startMonth === currentMonth);
-      if (existingIndex >= 0) {
-        yearlyHistory[existingIndex].amount = newYearly;
-      } else {
-        yearlyHistory.push({ amount: newYearly, startMonth: currentMonth });
+    // Handle Yearly Deposit History (only when yearly option is active so historical data stays untouched)
+    if (showYearly) {
+      let yearlyHistory = editingMember?.yearlyDepositHistory || [];
+      if (!editingMember || editingMember.yearlyFixedDeposit !== newYearly) {
+        const existingIndex = yearlyHistory.findIndex(h => h.startMonth === currentMonth);
+        if (existingIndex >= 0) {
+          yearlyHistory[existingIndex].amount = newYearly;
+        } else {
+          yearlyHistory.push({ amount: newYearly, startMonth: currentMonth });
+        }
+        data.yearlyDepositHistory = yearlyHistory;
       }
-      data.yearlyDepositHistory = yearlyHistory;
     }
 
     try {
@@ -537,12 +647,12 @@ export const AdminDashboard = () => {
         const member = members.find(m => m.id === memberId);
         if (!member) continue;
 
-        const isYearly = depositType === 'yearly';
+        const isYearly = showYearly && depositType === 'yearly';
         const currentYearCycleStart = getYearlyCycleStart(month, settings.startDate);
         
         const targetAmount = isYearly 
           ? getYearlyTargetWithCarryover(member, transactions, settings, currentYearCycleStart)
-          : getExpectedMonthlyAmount(member, month);
+          : getExpectedMonthlyAmount(member, month, settings);
           
         const currentTotal = isYearly 
           ? getYearlyPaidInCycle(member, transactions, currentYearCycleStart)
@@ -553,7 +663,7 @@ export const AdminDashboard = () => {
 
         if (depositView === 'pending') {
           const mAmount = Number(monthlyDepositAmount) || 0;
-          const yAmount = Number(yearlyDepositAmount) || 0;
+          const yAmount = showYearly ? (Number(yearlyDepositAmount) || 0) : 0;
 
           if (mAmount < 0 || yAmount < 0) {
             setStatusMessage({ type: 'error', text: 'Please enter valid amounts' });
@@ -566,14 +676,14 @@ export const AdminDashboard = () => {
           }
 
           const currentYearCycleStart = getYearlyCycleStart(month, settings.startDate);
-          const monthlyTarget = getExpectedMonthlyAmount(member, month);
+          const monthlyTarget = getExpectedMonthlyAmount(member, month, settings);
           const yearlyTarget = getYearlyTargetWithCarryover(member, transactions, settings, currentYearCycleStart);
 
           const alreadyPaidMonthly = transactions.filter(t => t.memberId === memberId && t.month === month && (t.type || 'monthly') === 'monthly').reduce((sum, t) => sum + t.amount, 0);
           const alreadyPaidYearlyInCycle = getYearlyPaidInCycle(member, transactions, currentYearCycleStart);
 
           // Rule: Monthly must be paid before yearly
-          if (alreadyPaidMonthly < monthlyTarget && mAmount === 0 && yAmount > 0) {
+          if (showYearly && alreadyPaidMonthly < monthlyTarget && mAmount === 0 && yAmount > 0) {
             setStatusMessage({ type: 'error', text: `Monthly contribution for ${member.name} must be paid before yearly deposit.` });
             return;
           }
@@ -589,7 +699,7 @@ export const AdminDashboard = () => {
             return;
           }
 
-          if (alreadyPaidYearlyInCycle + yAmount > yearlyTarget) {
+          if (showYearly && alreadyPaidYearlyInCycle + yAmount > yearlyTarget) {
             setStatusMessage({ type: 'error', text: `Total yearly deposit for ${member.name} cannot exceed ${yearlyTarget}. (Already paid in cycle: ${alreadyPaidYearlyInCycle})` });
             return;
           }
@@ -612,7 +722,7 @@ export const AdminDashboard = () => {
           }
 
           // 2. Add Yearly Transaction if any
-          if (yAmount > 0) {
+          if (showYearly && yAmount > 0) {
             await addDoc(collection(db, 'transactions'), {
               memberId: memberId,
               amount: yAmount,
@@ -630,14 +740,14 @@ export const AdminDashboard = () => {
         } else {
           // Completed View (Update case)
           const newMonthlyTotal = Number(monthlyDepositAmount);
-          const newYearlyTotal = Number(yearlyDepositAmount);
+          const newYearlyTotal = showYearly ? Number(yearlyDepositAmount) : 0;
           
-          if (isNaN(newMonthlyTotal) || newMonthlyTotal < 0 || isNaN(newYearlyTotal) || newYearlyTotal < 0) {
+          if (isNaN(newMonthlyTotal) || newMonthlyTotal < 0 || (showYearly && (isNaN(newYearlyTotal) || newYearlyTotal < 0))) {
             setStatusMessage({ type: 'error', text: 'Please enter valid amounts' });
             return;
           }
 
-          const monthlyTarget = getExpectedMonthlyAmount(member, month);
+          const monthlyTarget = getExpectedMonthlyAmount(member, month, settings);
           const yearlyTarget = getYearlyTargetWithCarryover(member, transactions, settings, currentYearCycleStart);
 
           if (newMonthlyTotal > monthlyTarget) {
@@ -650,7 +760,7 @@ export const AdminDashboard = () => {
             return;
           }
 
-          if (newYearlyTotal > yearlyTarget) {
+          if (showYearly && newYearlyTotal > yearlyTarget) {
             setStatusMessage({ type: 'error', text: `Total yearly deposit for ${member.name} cannot exceed ${yearlyTarget}` });
             return;
           }
@@ -680,29 +790,31 @@ export const AdminDashboard = () => {
             }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `members/${memberId}`));
           }
 
-          // Handle Yearly Update
-          const yearlyTransactions = transactions.filter(t => t.memberId === memberId && t.month === month && t.type === 'yearly');
-          const currentYearlyPaidInMonth = yearlyTransactions.reduce((sum, t) => sum + t.amount, 0);
-          const yearlyDiff = newYearlyTotal - currentYearlyPaidInMonth;
+          // Handle Yearly Update (only when yearly option is active so historical data is never wiped)
+          if (showYearly) {
+            const yearlyTransactions = transactions.filter(t => t.memberId === memberId && t.month === month && t.type === 'yearly');
+            const currentYearlyPaidInMonth = yearlyTransactions.reduce((sum, t) => sum + t.amount, 0);
+            const yearlyDiff = newYearlyTotal - currentYearlyPaidInMonth;
 
-          if (yearlyDiff !== 0) {
-            for (const t of yearlyTransactions) {
-              await deleteDoc(doc(db, 'transactions', t.id)).catch(err => handleFirestoreError(err, OperationType.DELETE, `transactions/${t.id}`));
+            if (yearlyDiff !== 0) {
+              for (const t of yearlyTransactions) {
+                await deleteDoc(doc(db, 'transactions', t.id)).catch(err => handleFirestoreError(err, OperationType.DELETE, `transactions/${t.id}`));
+              }
+              if (newYearlyTotal > 0) {
+                await addDoc(collection(db, 'transactions'), {
+                  memberId: memberId,
+                  amount: newYearlyTotal,
+                  date: now.toISOString(),
+                  month,
+                  type: 'yearly',
+                  createdAt: serverTimestamp()
+                }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'transactions'));
+              }
+              await updateDoc(doc(db, 'members', memberId), {
+                totalYearlyPaid: (Number(member.totalYearlyPaid) || 0) + yearlyDiff,
+                lastPaymentDate: now.toISOString()
+              }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `members/${memberId}`));
             }
-            if (newYearlyTotal > 0) {
-              await addDoc(collection(db, 'transactions'), {
-                memberId: memberId,
-                amount: newYearlyTotal,
-                date: now.toISOString(),
-                month,
-                type: 'yearly',
-                createdAt: serverTimestamp()
-              }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'transactions'));
-            }
-            await updateDoc(doc(db, 'members', memberId), {
-              totalYearlyPaid: (Number(member.totalYearlyPaid) || 0) + yearlyDiff,
-              lastPaymentDate: now.toISOString()
-            }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `members/${memberId}`));
           }
         }
       }
@@ -816,6 +928,7 @@ export const AdminDashboard = () => {
         monthlyOldAmount: Number(settingsForm.monthlyOldAmount) || 1000,
         monthlyNewAmount: Number(settingsForm.monthlyNewAmount) || 2000,
         monthlyIncreaseEffectiveMonth: settingsForm.monthlyIncreaseEffectiveMonth || '2026-09',
+        enableYearlyDeposit: settingsForm.enableYearlyDeposit === true,
         announcement: settingsForm.announcement,
         showAnnouncement: settingsForm.showAnnouncement,
         announcementSpeed: Number(settingsForm.announcementSpeed),
@@ -832,8 +945,8 @@ export const AdminDashboard = () => {
         updatedAt: new Date().toISOString()
       };
 
-      if (settings && (settings as any).id) {
-        await updateDoc(doc(db, 'settings', (settings as any).id), {
+      if (settings && settings.id) {
+        await updateDoc(doc(db, 'settings', settings.id), {
           ...data,
           startDate: settingsForm.startDate
         });
@@ -855,6 +968,46 @@ export const AdminDashboard = () => {
       }
       
       setStatusMessage({ type: 'success', text: 'Settings updated successfully' });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'settings');
+    }
+  };
+
+  const handleToggleYearlyDeposit = async (enabled: boolean) => {
+    setSettingsForm(prev => ({ ...prev, enableYearlyDeposit: enabled }));
+    if (!enabled) {
+      setDepositType('monthly');
+    }
+    try {
+      const settingsColl = collection(db, 'settings');
+      if (settings && settings.id) {
+        await updateDoc(doc(db, 'settings', settings.id), {
+          enableYearlyDeposit: enabled,
+          updatedAt: new Date().toISOString()
+        });
+      } else {
+        const q = query(settingsColl, limit(1));
+        const snapshot = await getDocs(q);
+        if (snapshot.empty) {
+          await addDoc(settingsColl, {
+            duration: Number(settingsForm.duration) || 24,
+            startDate: settingsForm.startDate || '2025-09',
+            enableYearlyDeposit: enabled,
+            updatedAt: new Date().toISOString()
+          });
+        } else {
+          await updateDoc(doc(db, 'settings', snapshot.docs[0].id), {
+            enableYearlyDeposit: enabled,
+            updatedAt: new Date().toISOString()
+          });
+        }
+      }
+      setStatusMessage({
+        type: 'success',
+        text: enabled
+          ? 'Yearly deposit option activated across Dashboard & Public View.'
+          : 'Yearly deposit option stopped and hidden. Previous data preserved.'
+      });
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'settings');
     }
@@ -920,7 +1073,7 @@ export const AdminDashboard = () => {
   });
 
   const totalDeposited = members.reduce((sum, m) => sum + m.totalDeposited, 0);
-  const totalYearly = members.reduce((sum, m) => sum + (m.totalYearlyPaid || 0), 0);
+  const totalYearly = members.reduce((sum, m) => sum + getEffectiveTotalYearlyPaid(m, settings), 0);
   const totalProfitsAmount = profits.reduce((sum, p) => sum + p.amount, 0);
   const totalExpensesAmount = (expenses || []).filter(e => e.deductFromBalance).reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
   const finalBalanceCalculated = totalDeposited + totalYearly + totalProfitsAmount - totalExpensesAmount;
@@ -1099,6 +1252,39 @@ export const AdminDashboard = () => {
                     onChange={(e) => setSettingsForm({...settingsForm, dueEndDate: Number(e.target.value)})}
                     className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 text-sm"
                   />
+                </div>
+              </div>
+
+              {/* Yearly Deposit Option Toggle */}
+              <div className="pt-6 mt-6 border-t border-gray-100">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl border border-gray-200 bg-gray-50/60">
+                  <div className="flex items-start gap-3">
+                    <div className={`p-2 rounded-xl shrink-0 ${settingsForm.enableYearlyDeposit ? 'bg-amber-100 text-amber-700' : 'bg-gray-200 text-gray-500'}`}>
+                      <Wallet className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-semibold text-gray-900">Yearly Deposit Option</h3>
+                        <span className={`text-xs font-medium ${settingsForm.enableYearlyDeposit ? 'text-emerald-700' : 'text-gray-500'}`}>
+                          · {settingsForm.enableYearlyDeposit ? 'Active' : 'Stopped'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {settingsForm.enableYearlyDeposit
+                          ? 'Yearly deposit sections, progress columns, and deposit fields are visible across the dashboard and public view.'
+                          : 'Yearly deposit sections and entry fields are hidden (Yearly Collection summary remains visible). Previous historical data is preserved.'}
+                      </p>
+                    </div>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer shrink-0 self-start sm:self-center">
+                    <input
+                      type="checkbox"
+                      className="sr-only peer"
+                      checked={settingsForm.enableYearlyDeposit}
+                      onChange={(e) => handleToggleYearlyDeposit(e.target.checked)}
+                    />
+                    <div className="w-11 h-6 bg-gray-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                  </label>
                 </div>
               </div>
 
@@ -1629,9 +1815,11 @@ export const AdminDashboard = () => {
                   <Bar dataKey="monthly" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={24}>
                     <LabelList dataKey="monthly" content={<CustomLabel label="M" />} />
                   </Bar>
-                  <Bar dataKey="yearly" fill="#f59e0b" radius={[4, 4, 0, 0]} maxBarSize={24}>
-                    <LabelList dataKey="yearly" content={<CustomLabel label="Y" />} />
-                  </Bar>
+                  {showYearly && (
+                    <Bar dataKey="yearly" fill="#f59e0b" radius={[4, 4, 0, 0]} maxBarSize={24}>
+                      <LabelList dataKey="yearly" content={<CustomLabel label="Y" />} />
+                    </Bar>
+                  )}
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -1788,6 +1976,7 @@ export const AdminDashboard = () => {
       </div>
 
       {/* Yearly Fixed Deposit Status Section */}
+      {showYearly && (
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         {/* Column 1: Yearly Fixed Deposits */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col h-[400px]">
@@ -1888,6 +2077,7 @@ export const AdminDashboard = () => {
           </div>
         </div>
       </div>
+      )}
 
 
       {/* Members Table */}
@@ -2004,7 +2194,7 @@ export const AdminDashboard = () => {
                       className="w-full px-3 sm:px-4 py-2 border border-gray-300 rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500" 
                     />
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                  <div className={`grid grid-cols-1 ${showYearly ? 'sm:grid-cols-2' : ''} gap-3 sm:gap-4`}>
                     <div>
                       <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1">Monthly Contribution</label>
                       <input 
@@ -2015,16 +2205,18 @@ export const AdminDashboard = () => {
                         className="w-full px-3 sm:px-4 py-2 border border-gray-300 rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500" 
                       />
                     </div>
-                    <div>
-                      <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1">Yearly Fixed Deposit</label>
-                      <input 
-                        required 
-                        type="number" 
-                        value={memberForm.yearlyFixedDeposit} 
-                        onChange={(e) => setMemberForm({...memberForm, yearlyFixedDeposit: e.target.value})}
-                        className="w-full px-3 sm:px-4 py-2 border border-gray-300 rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500" 
-                      />
-                    </div>
+                    {showYearly && (
+                      <div>
+                        <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1">Yearly Fixed Deposit</label>
+                        <input 
+                          required 
+                          type="number" 
+                          value={memberForm.yearlyFixedDeposit} 
+                          onChange={(e) => setMemberForm({...memberForm, yearlyFixedDeposit: e.target.value})}
+                          className="w-full px-3 sm:px-4 py-2 border border-gray-300 rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500" 
+                        />
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1">Status</label>
@@ -2092,22 +2284,24 @@ export const AdminDashboard = () => {
               </div>
               <form onSubmit={handleDeposit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
                 <div className="p-4 sm:p-6 space-y-3 sm:space-y-4 overflow-y-auto flex-1 min-h-0">
-                  <div className="flex gap-2 sm:gap-4 p-1 bg-gray-100 rounded-xl sm:rounded-2xl shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => setDepositType('monthly')}
-                      className={`flex-1 py-1.5 sm:py-2 text-xs sm:text-sm font-bold rounded-lg sm:rounded-xl transition-all ${depositType === 'monthly' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                    >
-                      Monthly Contribution
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDepositType('yearly')}
-                      className={`flex-1 py-1.5 sm:py-2 text-xs sm:text-sm font-bold rounded-lg sm:rounded-xl transition-all ${depositType === 'yearly' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                    >
-                      Yearly Fixed Deposit
-                    </button>
-                  </div>
+                  {showYearly && (
+                    <div className="flex gap-2 sm:gap-4 p-1 bg-gray-100 rounded-xl sm:rounded-2xl shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setDepositType('monthly')}
+                        className={`flex-1 py-1.5 sm:py-2 text-xs sm:text-sm font-bold rounded-lg sm:rounded-xl transition-all ${depositType === 'monthly' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                      >
+                        Monthly Contribution
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDepositType('yearly')}
+                        className={`flex-1 py-1.5 sm:py-2 text-xs sm:text-sm font-bold rounded-lg sm:rounded-xl transition-all ${depositType === 'yearly' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                      >
+                        Yearly Fixed Deposit
+                      </button>
+                    </div>
+                  )}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                     <div>
                       <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1">Select Month</label>
@@ -2139,7 +2333,7 @@ export const AdminDashboard = () => {
                         <p className="text-[10px] text-red-600 mt-1 font-medium">Month is before start date</p>
                       )}
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className={`grid ${showYearly ? 'grid-cols-2' : 'grid-cols-1'} gap-2`}>
                         <div>
                           <label className="block text-[9px] sm:text-[10px] font-bold text-gray-500 uppercase mb-1 truncate">Monthly (৳)</label>
                           <input 
@@ -2154,7 +2348,7 @@ export const AdminDashboard = () => {
                               if (selectedMemberIds.length === 1) {
                                 const member = members.find(m => m.id === selectedMemberIds[0]);
                                 if (member) {
-                                  const targetAmount = getExpectedMonthlyAmount(member, depositMonth);
+                                  const targetAmount = getExpectedMonthlyAmount(member, depositMonth, settings);
                                   const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === depositMonth && (t.type || 'monthly') === 'monthly');
                                   const alreadyPaid = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
                                   return Math.max(0, targetAmount - alreadyPaid);
@@ -2165,67 +2359,69 @@ export const AdminDashboard = () => {
                             className="w-full px-2 sm:px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500" 
                           />
                         </div>
-                        <div>
-                          <label className="block text-[9px] sm:text-[10px] font-bold text-gray-500 uppercase mb-1 truncate">Yearly (৳)</label>
-                          <input 
-                            type="number" 
-                            value={yearlyDepositAmount} 
-                            onChange={(e) => {
-                              const member = members.find(m => m.id === selectedMemberIds[0]);
-                              if (member) {
-                                const targetAmount = getExpectedMonthlyAmount(member, depositMonth);
-                                const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === depositMonth && (t.type || 'monthly') === 'monthly');
-                                const alreadyPaid = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
-                                
-                                if (alreadyPaid < targetAmount && !monthlyDepositAmount) {
-                                  setStatusMessage({ type: 'error', text: 'Please fill Monthly Contribution first' });
-                                  return;
-                                }
-                              }
-                              setYearlyDepositAmount(e.target.value);
-                              setStatusMessage(null);
-                            }}
-                            placeholder="0"
-                            disabled={(() => {
-                              if (selectedMemberIds.length === 1) {
+                        {showYearly && (
+                          <div>
+                            <label className="block text-[9px] sm:text-[10px] font-bold text-gray-500 uppercase mb-1 truncate">Yearly (৳)</label>
+                            <input 
+                              type="number" 
+                              value={yearlyDepositAmount} 
+                              onChange={(e) => {
                                 const member = members.find(m => m.id === selectedMemberIds[0]);
                                 if (member) {
-                                  const targetAmount = getExpectedMonthlyAmount(member, depositMonth);
+                                  const targetAmount = getExpectedMonthlyAmount(member, depositMonth, settings);
                                   const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === depositMonth && (t.type || 'monthly') === 'monthly');
                                   const alreadyPaid = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
-                                  return alreadyPaid < targetAmount && !monthlyDepositAmount;
+                                  
+                                  if (alreadyPaid < targetAmount && !monthlyDepositAmount) {
+                                    setStatusMessage({ type: 'error', text: 'Please fill Monthly Contribution first' });
+                                    return;
+                                  }
                                 }
-                              }
-                              return false;
-                            })()}
-                            max={(() => {
-                              if (selectedMemberIds.length === 1) {
-                                const member = members.find(m => m.id === selectedMemberIds[0]);
-                                if (member) {
-                                  const currentYearCycleStart = getYearlyCycleStart(depositMonth, settings.startDate);
-                                  const targetAmount = getYearlyTargetWithCarryover(member, transactions, settings, currentYearCycleStart);
-                                  const currentTotal = getYearlyPaidInCycle(member, transactions, currentYearCycleStart);
-                                  return Math.max(0, targetAmount - currentTotal);
-                                }
-                              }
-                              return undefined;
-                            })()}
-                            className={`w-full px-2 sm:px-3 py-2 border rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500 ${
-                              (() => {
+                                setYearlyDepositAmount(e.target.value);
+                                setStatusMessage(null);
+                              }}
+                              placeholder="0"
+                              disabled={(() => {
                                 if (selectedMemberIds.length === 1) {
                                   const member = members.find(m => m.id === selectedMemberIds[0]);
                                   if (member) {
-                                    const targetAmount = getExpectedMonthlyAmount(member, depositMonth);
+                                    const targetAmount = getExpectedMonthlyAmount(member, depositMonth, settings);
                                     const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === depositMonth && (t.type || 'monthly') === 'monthly');
                                     const alreadyPaid = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
                                     return alreadyPaid < targetAmount && !monthlyDepositAmount;
                                   }
                                 }
                                 return false;
-                              })() ? 'bg-gray-50 border-gray-200 cursor-not-allowed' : 'border-gray-300'
-                            }`}
-                          />
-                        </div>
+                              })()}
+                              max={(() => {
+                                if (selectedMemberIds.length === 1) {
+                                  const member = members.find(m => m.id === selectedMemberIds[0]);
+                                  if (member) {
+                                    const currentYearCycleStart = getYearlyCycleStart(depositMonth, settings.startDate);
+                                    const targetAmount = getYearlyTargetWithCarryover(member, transactions, settings, currentYearCycleStart);
+                                    const currentTotal = getYearlyPaidInCycle(member, transactions, currentYearCycleStart);
+                                    return Math.max(0, targetAmount - currentTotal);
+                                  }
+                                }
+                                return undefined;
+                              })()}
+                              className={`w-full px-2 sm:px-3 py-2 border rounded-xl text-sm focus:ring-indigo-500 focus:border-indigo-500 ${
+                                (() => {
+                                  if (selectedMemberIds.length === 1) {
+                                    const member = members.find(m => m.id === selectedMemberIds[0]);
+                                    if (member) {
+                                      const targetAmount = getExpectedMonthlyAmount(member, depositMonth, settings);
+                                      const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === depositMonth && (t.type || 'monthly') === 'monthly');
+                                      const alreadyPaid = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
+                                      return alreadyPaid < targetAmount && !monthlyDepositAmount;
+                                    }
+                                  }
+                                  return false;
+                                })() ? 'bg-gray-50 border-gray-200 cursor-not-allowed' : 'border-gray-300'
+                              }`}
+                            />
+                          </div>
+                        )}
                       </div>
                   </div>
 
@@ -2239,7 +2435,7 @@ export const AdminDashboard = () => {
                           type="button"
                           onClick={() => {
                             const pendingMembers = members.filter(m => {
-                              const monthTransactions = transactions.filter(t => t.memberId === m.id && t.month === depositMonth);
+                              const monthTransactions = transactions.filter(t => t.memberId === m.id && t.month === depositMonth && (showYearly || (t.type || 'monthly') === 'monthly'));
                               const paidThisMonth = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
                               return paidThisMonth < getExpectedMonthlyAmount(m, depositMonth, settings) && m.status === 'Active';
                             });
@@ -2253,7 +2449,7 @@ export const AdminDashboard = () => {
                         >
                           {(() => {
                             const pendingMembers = members.filter(m => {
-                              const monthTransactions = transactions.filter(t => t.memberId === m.id && t.month === depositMonth);
+                              const monthTransactions = transactions.filter(t => t.memberId === m.id && t.month === depositMonth && (showYearly || (t.type || 'monthly') === 'monthly'));
                               const paidThisMonth = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
                               return paidThisMonth < getExpectedMonthlyAmount(m, depositMonth, settings) && m.status === 'Active';
                             });
@@ -2266,7 +2462,7 @@ export const AdminDashboard = () => {
                     <div className="border border-gray-200 rounded-xl max-h-[160px] sm:max-h-[220px] overflow-y-auto p-1.5 sm:p-2 space-y-1">
                       {(() => {
                         const filteredMembers = members.filter(m => {
-                          const monthTransactions = transactions.filter(t => t.memberId === m.id && t.month === depositMonth);
+                          const monthTransactions = transactions.filter(t => t.memberId === m.id && t.month === depositMonth && (showYearly || (t.type || 'monthly') === 'monthly'));
                           const paidThisMonth = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
                           const target = getExpectedMonthlyAmount(m, depositMonth, settings);
                           return depositView === 'pending' ? paidThisMonth < target : paidThisMonth >= target;
@@ -2282,7 +2478,8 @@ export const AdminDashboard = () => {
 
                         return filteredMembers.map(member => {
                           const monthTransactions = transactions.filter(t => t.memberId === member.id && t.month === depositMonth);
-                          const paidThisMonth = monthTransactions.reduce((sum, t) => sum + t.amount, 0);
+                          const monthlyPaidInMonth = monthTransactions.filter(t => (t.type || 'monthly') === 'monthly').reduce((sum, t) => sum + t.amount, 0);
+                          const yearlyPaidInMonth = monthTransactions.filter(t => t.type === 'yearly').reduce((sum, t) => sum + t.amount, 0);
                           
                           return (
                             <label 
@@ -2315,8 +2512,8 @@ export const AdminDashboard = () => {
                                       if (selectedMember) {
                                         const mTransactions = transactions.filter(t => t.memberId === selectedMember.id && t.month === depositMonth);
                                         if (depositView === 'pending') {
-                                          const alreadyPaid = mTransactions.reduce((sum, t) => sum + t.amount, 0);
-                                          const remaining = getExpectedMonthlyAmount(selectedMember, depositMonth) - alreadyPaid;
+                                          const alreadyPaid = mTransactions.filter(t => (t.type || 'monthly') === 'monthly').reduce((sum, t) => sum + t.amount, 0);
+                                          const remaining = getExpectedMonthlyAmount(selectedMember, depositMonth, settings) - alreadyPaid;
                                           setDepositAmount(String(remaining));
                                           setMonthlyDepositAmount(String(remaining > 0 ? remaining : 0));
                                         } else {
@@ -2338,11 +2535,13 @@ export const AdminDashboard = () => {
                               <div className="text-right">
                                 <div className="flex flex-col items-end">
                                   <p className="text-xs font-bold text-gray-900 leading-none">
-                                    M: {formatCurrency(transactions.filter(t => t.memberId === member.id && t.month === depositMonth && (t.type || 'monthly') === 'monthly').reduce((sum, t) => sum + t.amount, 0))}
+                                    {showYearly ? `M: ${formatCurrency(monthlyPaidInMonth)}` : formatCurrency(monthlyPaidInMonth)}
                                   </p>
-                                  <p className="text-[10px] font-bold text-amber-600 mt-1">
-                                    Y: {formatCurrency(transactions.filter(t => t.memberId === member.id && t.month === depositMonth && t.type === 'yearly').reduce((sum, t) => sum + t.amount, 0))}
-                                  </p>
+                                  {showYearly && (
+                                    <p className="text-[10px] font-bold text-amber-600 mt-1">
+                                      Y: {formatCurrency(yearlyPaidInMonth)}
+                                    </p>
+                                  )}
                                 </div>
                               </div>
                             </label>
@@ -2407,7 +2606,7 @@ export const AdminDashboard = () => {
                   const monthlyPaid = mTransactions.filter(t => (t.type || 'monthly') === 'monthly').reduce((sum, t) => sum + t.amount, 0);
                   const yearlyPaid = mTransactions.filter(t => t.type === 'yearly').reduce((sum, t) => sum + t.amount, 0);
                   const totalPaid = monthlyPaid + yearlyPaid;
-                  const target = getExpectedMonthlyAmount(historyMember, m);
+                  const target = getExpectedMonthlyAmount(historyMember, m, settings);
                   const isPaid = monthlyPaid >= target;
                   
                   return (
@@ -2426,11 +2625,13 @@ export const AdminDashboard = () => {
                       <div className="text-right">
                         <div className="flex flex-col items-end">
                           <p className={`text-xs sm:text-sm font-bold ${isPaid ? 'text-blue-700' : 'text-red-700'}`}>
-                            M: {formatCurrency(monthlyPaid)}
+                            {showYearly ? `M: ${formatCurrency(monthlyPaid)}` : formatCurrency(monthlyPaid)}
                           </p>
-                          <p className="text-[10px] font-medium text-gray-500">
-                            Y: {formatCurrency(yearlyPaid)}
-                          </p>
+                          {showYearly && (
+                            <p className="text-[10px] font-medium text-gray-500">
+                              Y: {formatCurrency(yearlyPaid)}
+                            </p>
+                          )}
                         </div>
                         <p className={`text-[10px] font-bold uppercase mt-1 ${isPaid ? 'text-blue-600' : 'text-red-600'}`}>
                           {isPaid ? 'Fully Paid' : 'Not Paid'}
